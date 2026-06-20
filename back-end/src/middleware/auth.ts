@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
 import { supabase } from '../services/supabase.js';
+import { ensurePublicUser } from '../services/users.js';
 
 // Extend Express Request interface locally to support custom injected auth data
 export interface AuthenticatedRequest extends Request {
@@ -39,6 +40,8 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
       id: user.id,
       email: user.email // TypeScript now completely accepts string | undefined here
     };
+
+    await ensurePublicUser(user.id, user.email);
 
     next();
 
