@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import type { Activity, Stop, PlanStep } from './types';
-import { EXAMPLE_STOPS } from './mockData';
 
 interface TrekStore {
   // plan flow
@@ -38,7 +37,6 @@ interface TrekStore {
   setPublished: (v: boolean) => void;
 
   // helpers
-  loadExample: () => void;
   startNewDay: () => void;
 }
 
@@ -54,18 +52,18 @@ export const useTrekStore = create<TrekStore>((set) => ({
   setExploreDate: (v) => set({ exploreDate: v }),
 
   activities: [],
-  addActivity: (a) => set((s) => ({ activities: [...s.activities, a] })),
-  removeActivity: (id) => set((s) => ({ activities: s.activities.filter((a) => a.id !== id) })),
+  addActivity: (a: Activity) => set((s: TrekStore) => ({ activities: [...s.activities, a] })),
+  removeActivity: (id: string) => set((s: TrekStore) => ({ activities: s.activities.filter((a) => a.id !== id) })),
   clearActivities: () => set({ activities: [] }),
 
   curActIndex: 0,
   setCurActIndex: (i) => set({ curActIndex: i }),
 
   stops: [],
-  addStop: (stop) => set((s) => ({ stops: [...s.stops, stop] })),
-  removeStop: (id) => set((s) => ({ stops: s.stops.filter((st) => st.id !== id) })),
-  moveStop: (id, dir) =>
-    set((s) => {
+  addStop: (stop: Stop) => set((s: TrekStore) => ({ stops: [...s.stops, stop] })),
+  removeStop: (id: string) => set((s: TrekStore) => ({ stops: s.stops.filter((st) => st.id !== id) })),
+  moveStop: (id: string, dir: 'up' | 'down') =>
+    set((s: TrekStore) => {
       const idx = s.stops.findIndex((st) => st.id === id);
       if (idx < 0) return s;
       const arr = [...s.stops];
@@ -80,7 +78,6 @@ export const useTrekStore = create<TrekStore>((set) => ({
   published: false,
   setPublished: (v) => set({ published: v }),
 
-  loadExample: () => set({ stops: EXAMPLE_STOPS.map((s) => ({ ...s })), planStep: 'plan' }),
   startNewDay: () =>
     set({
       planStep: 'create',

@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.2",
     "@types/react": "~19.1.10",
     "expo": "~54.0.0",
     "expo-constants": "~18.0.13",
