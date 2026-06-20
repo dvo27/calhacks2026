@@ -1,51 +1,90 @@
-import Svg, { Defs, LinearGradient, Stop, Rect, Polyline, Circle, Text as SvgText } from 'react-native-svg';
-import { View } from 'react-native';
+import Svg, { Defs, LinearGradient, Stop, Rect, Line, Polyline, Circle, Text as SvgText, G } from 'react-native-svg';
+import { Colors } from '@/constants/colors';
 
-interface Props {
-  points: [number, number][];
-  height?: number;
-  showRoute?: boolean;
+export interface RoutePoint {
+  x: number; // 0-100
+  y: number; // 0-100
 }
 
-export default function RouteMap({ points, height = 120, showRoute = false }: Props) {
-  const W = 280;
-  const H = height;
-  const polyPts = points.map(([x, y]) => `${x},${y}`).join(' ');
+interface RouteMapProps {
+  points: RoutePoint[];
+  height?: number;
+  borderRadius?: number;
+}
+
+const W = 100;
+const H = 62;
+
+export default function RouteMap({ points, height = 96, borderRadius = 12 }: RouteMapProps) {
+  const coords = points.map((p) => [p.x, p.y * 0.62] as [number, number]);
+
+  const gridLines = [];
+  for (let i = 0; i < 7; i++) {
+    gridLines.push(
+      <Line key={`h${i}`} x1="0" y1={i * 9} x2="100" y2={i * 9} stroke="#fff" strokeWidth={0.5} opacity={0.55} />
+    );
+  }
+  for (let i = 0; i < 12; i++) {
+    gridLines.push(
+      <Line key={`v${i}`} x1={i * 9} y1="0" x2={i * 9} y2="62" stroke="#fff" strokeWidth={0.5} opacity={0.55} />
+    );
+  }
+
+  const polylinePoints = coords.map((p) => p.join(',')).join(' ');
 
   return (
-    <View style={{ width: '100%', height, borderRadius: 14, overflow: 'hidden' }}>
-      <Svg width="100%" height={H} viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid slice">
-        <Defs>
-          <LinearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-            <Stop offset="0" stopColor="#FCEAE2" />
-            <Stop offset="1" stopColor="#E5EDF2" />
-          </LinearGradient>
-        </Defs>
-        <Rect x="0" y="0" width={W} height={H} fill="url(#bg)" />
+    <Svg
+      viewBox={`0 0 ${W} ${H}`}
+      width="100%"
+      height={height}
+      style={{ borderRadius, overflow: 'hidden' }}
+      preserveAspectRatio="xMidYMid slice"
+    >
+      <Defs>
+        <LinearGradient id="mapBg" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor="#FCEAE2" />
+          <Stop offset="1" stopColor="#E5EDF2" />
+        </LinearGradient>
+      </Defs>
 
-        {/* grid lines */}
-        {[0.25, 0.5, 0.75].map((f) => (
-          <Polyline key={`v${f}`} points={`${W * f},0 ${W * f},${H}`} stroke="#ECEDE8" strokeWidth="1" />
-        ))}
-        {[0.33, 0.66].map((f) => (
-          <Polyline key={`h${f}`} points={`0,${H * f} ${W},${H * f}`} stroke="#ECEDE8" strokeWidth="1" />
-        ))}
+      {/* background */}
+      <Rect width={W} height={H} fill="url(#mapBg)" />
+      {gridLines}
 
-        {showRoute && points.length > 1 && (
-          <Polyline points={polyPts} fill="none" stroke="#FF5A36" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-        )}
+      {/* city block shapes */}
+      <Rect x={8} y={6} width={20} height={13} rx={3} fill="#fff" opacity={0.4} />
+      <Rect x={62} y={30} width={26} height={16} rx={3} fill="#CDE3D4" opacity={0.7} />
+      <Rect x={40} y={44} width={14} height={12} rx={3} fill="#fff" opacity={0.4} />
 
-        {points.map(([x, y], i) => (
-          <React.Fragment key={i}>
-            <Circle cx={x} cy={y} r="10" fill="#FF5A36" />
-            <SvgText x={x} y={y + 4} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#fff">
-              {i + 1}
-            </SvgText>
-          </React.Fragment>
-        ))}
-      </Svg>
-    </View>
+      {/* route — black line */}
+      {coords.length > 1 && (
+        <Polyline
+          points={polylinePoints}
+          fill="none"
+          stroke={Colors.ink}
+          strokeWidth={2.4}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          opacity={0.95}
+        />
+      )}
+
+      {/* stop pins — orange circles, numbered */}
+      {coords.map(([x, y], i) => (
+        <G key={i}>
+          <Circle cx={x} cy={y} r={4} fill={Colors.coral} />
+          <SvgText
+            x={x}
+            y={y + 1.4}
+            fontSize={4.4}
+            fontWeight="700"
+            fill="#fff"
+            textAnchor="middle"
+          >
+            {i + 1}
+          </SvgText>
+        </G>
+      ))}
+    </Svg>
   );
 }
-
-import React from 'react';
