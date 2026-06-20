@@ -139,9 +139,9 @@ const styles = StyleSheet.create({
   body: { padding: 14, paddingTop: 13 },
   title: {
     fontWeight: '700',
-    fontSize: 19,
+    fontSize: 23,
     letterSpacing: -0.2,
-    lineHeight: 22,
+    lineHeight: 25,
     color: Colors.ink,
   },
   dayMeta: {
@@ -162,7 +162,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 4,
   },
-  tagText: { fontFamily: 'monospace', fontSize: 11, fontWeight: '700', color: Colors.ink2 },
+  tagText: { fontFamily: 'monospace', fontSize: 13, fontWeight: '700', color: Colors.ink2 },
   socRow: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 4 },
   socItem: { fontFamily: 'monospace', fontWeight: '700', fontSize: 13, color: Colors.ink2 },
   copyBtn: {
