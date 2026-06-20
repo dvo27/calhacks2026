@@ -1,5 +1,4 @@
 import { Worker, Job } from 'bullmq';
-// CRITICAL: Internal relative imports must use the explicit .js extension
 import { supabase } from './services/supabase.js';
 import { callASIOneParser, schedulePokeReminder } from './services/integrations.js';
 import { loadBackendEnv, getBackendEnv } from './config/env.js';

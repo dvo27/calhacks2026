@@ -1,10 +1,12 @@
 import express from 'express';
 import { Queue } from 'bullmq';
-// CRITICAL: Internal relative imports must use the explicit .js extension
-import { supabase } from './services/supabase.js';
+import { URL } from 'node:url';
 import { loadBackendEnv, getBackendEnv } from './config/env.js';
-import { requireAuth } from './middleware/auth.js';
-import type { AuthenticatedRequest } from './middleware/auth.js';
+import { createHealthRouter } from './routes/health.js';
+import { createCollectionsRouter } from './routes/collections.js';
+import { createProfileRouter } from './routes/profile.js';
+import { createSocialRouter } from './routes/social.js';
+import { createTripsRouter } from './routes/trips.js';
 
 loadBackendEnv();
 
@@ -12,127 +14,35 @@ const app = express();
 const PORT = Number(getBackendEnv('PORT') ?? 5001);
 const REDIS_URL = getBackendEnv('REDIS_URL') ?? 'redis://127.0.0.1:6379';
 
-// Global Middleware to parse incoming JSON request bodies
 app.use(express.json());
 
-app.get('/health', (_req, res) => {
-  res.status(200).json({ ok: true });
-});
-
 // 1. Initialize your BullMQ Queue to pass jobs off to your background worker
+const redisUrl = new URL(REDIS_URL);
+
 const itineraryQueue = new Queue('itinerary-processing', {
   connection: {
-    url: REDIS_URL,
-  }
+    host: redisUrl.hostname,
+    port: Number(redisUrl.port) || 6379,
+    username: redisUrl.username || undefined,
+    password: redisUrl.password || undefined,
+    tls: redisUrl.protocol === 'rediss:' ? {} : undefined,
+    maxRetriesPerRequest: 3, // producer should fail fast, not hang forever
+  },
 });
 
-console.log('🚀 API Queue system connected to Redis server successfully.');
-
-app.get('/api/health', async (_req: express.Request, res: express.Response) => {
-  try {
-    const { error } = await supabase.from('trips').select('id').limit(1);
-
-    if (error) {
-      res.status(500).json({
-        status: 'error',
-        message: 'API is up, but Supabase access failed.',
-        details: error.message,
-      });
-      return;
-    }
-
-    res.status(200).json({ status: 'healthy', supabase: true });
-  } catch (error: any) {
-    res.status(500).json({ status: 'crash', error: error.message });
-  }
+itineraryQueue.on('error', (err) => {
+  console.error('❌ Redis connection error:', err.message);
 });
 
-/**
- * @route   POST /api/trips/generate
- * @desc    Submit raw textual itinerary data to parse and map out a trip.
- * @access  Protected (Requires Bearer Supabase JWT Token)
- */
-app.post('/api/trips/generate', requireAuth, async (req: AuthenticatedRequest, res: express.Response) => {
-  try {
-    const userId = req.user?.id;
-    const { title, destination, rawText, startDate, endDate } = req.body;
+itineraryQueue.waitUntilReady()
+  .then(() => console.log('🚀 Connected to Redis server successfully.'))
+    .catch((err) => console.error('❌ Redis failed to become ready:', err.message));
 
-    // Fast-fail validation checks
-    if (!title || !destination || !rawText) {
-      res.status(400).json({ error: 'Missing mandatory tracking parameters: title, destination, and rawText are required.' });
-      return;
-    }
-
-    if (!userId) {
-      res.status(401).json({ error: 'Unauthorized: Invalid context identity.' });
-      return;
-    }
-
-    // 1. Create the base parent record tracking this trip itinerary inside Supabase
-    const { data: trip, error: tripError } = await supabase
-      .from('trips')
-      .insert({
-        user_id: userId,
-        title,
-        destination,
-        start_date: startDate || new Date().toISOString(),
-        end_date: endDate || new Date().toISOString(),
-        is_public: false // Hide the trip while the background worker is parsing coordinates
-      })
-      .select('id')
-      .single();
-
-    if (tripError || !trip) {
-      console.error('Supabase DB Trip insertion failed:', tripError);
-      res.status(500).json({ error: 'Database transaction failed while creating trip layout shell.' });
-      return;
-    }
-
-    // 2. Offload the heavy text parsing loop out to the BullMQ redis cluster thread
-    const job = await itineraryQueue.add(`parse_${trip.id}`, {
-      tripId: trip.id,
-      userId,
-      rawText
-    });
-
-    // 3. Return immediate success feedback to the Expo mobile app
-    res.status(202).json({
-      success: true,
-      message: 'Itinerary submitted successfully. Mapping engines are compiling routes.',
-      tripId: trip.id,
-      jobId: job.id
-    });
-
-  } catch (error) {
-    console.error('Critical failure handling trip generation route sequence:', error);
-    res.status(500).json({ error: 'Internal Server Error processing automation flow.' });
-  }
-});
-
-/**
- * @route   GET /api/trips/feed
- * @desc    Fetch publicly accessible completed routes using PostGIS filters
- * @access  Public
- */
-app.get('/api/trips/feed', async (_req: express.Request, res: express.Response) => {
-  try {
-    const { data: publicTrips, error } = await supabase
-      .from('trips')
-      .select(`
-        id, title, destination, total_budget, total_distance_miles, total_drive_time_minutes,
-        activities (id, title, location_name, cost, start_time)
-      `)
-      .eq('is_public', true)
-      .order('created_at', { ascending: false });
-
-    if (error) throw error;
-
-    res.status(200).json({ trips: publicTrips });
-  } catch (error) {
-    console.error('Error fetching dashboard discover feeds:', error);
-    res.status(500).json({ error: 'Failed to retrieve feed arrays.' });
-  }
-});
+app.use(createHealthRouter());
+app.use('/api/trips', createTripsRouter({ itineraryQueue }));
+app.use('/api/profile', createProfileRouter());
+app.use('/api/collections', createCollectionsRouter());
+app.use('/api', createSocialRouter());
 
 app.listen(PORT, () => {
   console.log(`API server listening on http://localhost:${PORT}`);
