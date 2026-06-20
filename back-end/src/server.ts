@@ -1,6 +1,6 @@
 import express from 'express';
 import { Queue } from 'bullmq';
-// CRITICAL: Internal relative imports must use the explicit .js extension
+import { URL } from 'node:url';
 import { supabase } from './services/supabase.js';
 import { loadBackendEnv, getBackendEnv } from './config/env.js';
 import { requireAuth } from './middleware/auth.js';
@@ -12,7 +12,6 @@ const app = express();
 const PORT = Number(getBackendEnv('PORT') ?? 5001);
 const REDIS_URL = getBackendEnv('REDIS_URL') ?? 'redis://127.0.0.1:6379';
 
-// Global Middleware to parse incoming JSON request bodies
 app.use(express.json());
 
 app.get('/health', (_req, res) => {
@@ -20,13 +19,26 @@ app.get('/health', (_req, res) => {
 });
 
 // 1. Initialize your BullMQ Queue to pass jobs off to your background worker
+const redisUrl = new URL(REDIS_URL);
+
 const itineraryQueue = new Queue('itinerary-processing', {
   connection: {
-    url: REDIS_URL,
-  }
+    host: redisUrl.hostname,
+    port: Number(redisUrl.port) || 6379,
+    username: redisUrl.username || undefined,
+    password: redisUrl.password || undefined,
+    tls: redisUrl.protocol === 'rediss:' ? {} : undefined,
+    maxRetriesPerRequest: 3, // producer should fail fast, not hang forever
+  },
 });
 
-console.log('🚀 API Queue system connected to Redis server successfully.');
+itineraryQueue.on('error', (err) => {
+  console.error('❌ Redis connection error:', err.message);
+});
+
+itineraryQueue.waitUntilReady()
+  .then(() => console.log('🚀 Connected to Redis server successfully.'))
+  .catch((err) => console.error('❌ Redis failed to become ready:', err.message));
 
 app.get('/api/health', async (_req: express.Request, res: express.Response) => {
   try {
@@ -47,17 +59,11 @@ app.get('/api/health', async (_req: express.Request, res: express.Response) => {
   }
 });
 
-/**
- * @route   POST /api/trips/generate
- * @desc    Submit raw textual itinerary data to parse and map out a trip.
- * @access  Protected (Requires Bearer Supabase JWT Token)
- */
 app.post('/api/trips/generate', requireAuth, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
     const userId = req.user?.id;
     const { title, destination, rawText, startDate, endDate } = req.body;
 
-    // Fast-fail validation checks
     if (!title || !destination || !rawText) {
       res.status(400).json({ error: 'Missing mandatory tracking parameters: title, destination, and rawText are required.' });
       return;
@@ -68,7 +74,6 @@ app.post('/api/trips/generate', requireAuth, async (req: AuthenticatedRequest, r
       return;
     }
 
-    // 1. Create the base parent record tracking this trip itinerary inside Supabase
     const { data: trip, error: tripError } = await supabase
       .from('trips')
       .insert({
@@ -77,7 +82,7 @@ app.post('/api/trips/generate', requireAuth, async (req: AuthenticatedRequest, r
         destination,
         start_date: startDate || new Date().toISOString(),
         end_date: endDate || new Date().toISOString(),
-        is_public: false // Hide the trip while the background worker is parsing coordinates
+        is_public: false
       })
       .select('id')
       .single();
@@ -88,14 +93,12 @@ app.post('/api/trips/generate', requireAuth, async (req: AuthenticatedRequest, r
       return;
     }
 
-    // 2. Offload the heavy text parsing loop out to the BullMQ redis cluster thread
     const job = await itineraryQueue.add(`parse_${trip.id}`, {
       tripId: trip.id,
       userId,
       rawText
     });
 
-    // 3. Return immediate success feedback to the Expo mobile app
     res.status(202).json({
       success: true,
       message: 'Itinerary submitted successfully. Mapping engines are compiling routes.',
@@ -109,11 +112,6 @@ app.post('/api/trips/generate', requireAuth, async (req: AuthenticatedRequest, r
   }
 });
 
-/**
- * @route   GET /api/trips/feed
- * @desc    Fetch publicly accessible completed routes using PostGIS filters
- * @access  Public
- */
 app.get('/api/trips/feed', async (_req: express.Request, res: express.Response) => {
   try {
     const { data: publicTrips, error } = await supabase
