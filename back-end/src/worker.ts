@@ -2,6 +2,7 @@ import { Worker, Job } from 'bullmq';
 import { supabase } from './services/supabase.js';
 import { callASIOneParser, schedulePokeReminder } from './services/integrations.js';
 import { loadBackendEnv, getBackendEnv } from './config/env.js';
+import { invalidateTripTimeline } from './services/timeline.js';
 
 loadBackendEnv();
 
@@ -61,6 +62,8 @@ const worker = new Worker<ItineraryJobData>(
         .eq('id', tripId);
 
       if (tripUpdateError) throw tripUpdateError;
+
+      await invalidateTripTimeline(tripId);
 
       console.log(`[Job ${job.id}] Successfully generated timeline, synced hooks, and compiled metrics!`);
       return { success: true, count: parsedActivities.length };
