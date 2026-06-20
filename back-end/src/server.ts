@@ -1,15 +1,16 @@
 import express from 'express';
 import { Queue } from 'bullmq';
-import dotenv from 'dotenv';
 // CRITICAL: Internal relative imports must use the explicit .js extension
 import { supabase } from './services/supabase.js';
+import { loadBackendEnv, getBackendEnv } from './config/env.js';
 import { requireAuth } from './middleware/auth.js';
 import type { AuthenticatedRequest } from './middleware/auth.js';
 
-dotenv.config();
+loadBackendEnv();
 
 const app = express();
-const PORT = Number(process.env.PORT || 5001);
+const PORT = Number(getBackendEnv('PORT') ?? 5001);
+const REDIS_URL = getBackendEnv('REDIS_URL') ?? 'redis://127.0.0.1:6379';
 
 // Global Middleware to parse incoming JSON request bodies
 app.use(express.json());
@@ -21,11 +22,30 @@ app.get('/health', (_req, res) => {
 // 1. Initialize your BullMQ Queue to pass jobs off to your background worker
 const itineraryQueue = new Queue('itinerary-processing', {
   connection: {
-    url: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+    url: REDIS_URL,
   }
 });
 
 console.log('🚀 API Queue system connected to Redis server successfully.');
+
+app.get('/api/health', async (_req: express.Request, res: express.Response) => {
+  try {
+    const { error } = await supabase.from('trips').select('id').limit(1);
+
+    if (error) {
+      res.status(500).json({
+        status: 'error',
+        message: 'API is up, but Supabase access failed.',
+        details: error.message,
+      });
+      return;
+    }
+
+    res.status(200).json({ status: 'healthy', supabase: true });
+  } catch (error: any) {
+    res.status(500).json({ status: 'crash', error: error.message });
+  }
+});
 
 /**
  * @route   POST /api/trips/generate
