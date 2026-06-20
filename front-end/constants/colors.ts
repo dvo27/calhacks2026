@@ -1,0 +1,15 @@
+export const Colors = {
+  bg: '#EEF0EB',
+  paper: '#FFFFFF',
+  ink: '#191A24',
+  ink2: '#4C4E5C',
+  soft: '#9A9DA9',
+  line: '#ECEDE8',
+  coral: '#FF5A36',
+  coral2: '#FF7D5C',
+  coralSoft: '#FFE7DF',
+  amber: '#F2A024',
+  trekblue: '#3E6FB0',
+  mint: '#1FA877',
+  violet: '#6B5CE0',
+} as const;
