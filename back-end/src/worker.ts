@@ -2,9 +2,9 @@ import { Worker, Job } from 'bullmq';
 // CRITICAL: Internal relative imports must use the explicit .js extension
 import { supabase } from './services/supabase.js';
 import { callASIOneParser, schedulePokeReminder } from './services/integrations.js';
-import dotenv from 'dotenv';
+import { loadBackendEnv, getBackendEnv } from './config/env.js';
 
-dotenv.config();
+loadBackendEnv();
 
 interface ItineraryJobData {
   tripId: string;
@@ -75,7 +75,7 @@ const worker = new Worker<ItineraryJobData>(
   { 
     // Fixes structural ioredis type-mismatch by passing the configuration directly to BullMQ
     connection: {
-      url: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+      url: getBackendEnv('REDIS_URL') ?? 'redis://127.0.0.1:6379',
       maxRetriesPerRequest: null, 
     },
     concurrency: 2 // Processes up to 2 itineraries simultaneously 
