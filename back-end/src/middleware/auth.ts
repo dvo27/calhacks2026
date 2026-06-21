@@ -36,6 +36,21 @@ function decodeJwtPayload(token: string): { sub?: string; email?: string } | nul
   }
 }
 
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutHandle = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms.`)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+    }
+  }
+}
+
 /**
  * Express Middleware to validate incoming Supabase JWT Access Tokens.
  */
@@ -58,7 +73,7 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
     let error: Error | null = null;
 
     try {
-      const result = await supabase.auth.getUser(token);
+      const result = await withTimeout(supabase.auth.getUser(token), 2500, 'Supabase auth lookup');
       user = result.data.user ?? null;
       error = result.error ?? null;
     } catch (fetchError) {
@@ -85,7 +100,11 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
       email: user.email // TypeScript now completely accepts string | undefined here
     };
 
-    await ensurePublicUser(user.id, user.email);
+    try {
+      await withTimeout(ensurePublicUser(user.id, user.email), 2000, 'Public user provisioning');
+    } catch (provisionError) {
+      console.warn('User provisioning skipped/failed:', provisionError instanceof Error ? provisionError.message : provisionError);
+    }
 
     next();
 

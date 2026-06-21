@@ -16,8 +16,30 @@ export function createProfileRouter() {
         return;
       }
 
-      const [profileResult, tripsResult, draftTripsResult, collectionsResult] = await Promise.all([
-        supabase.from('users').select('id, username, avatar_url, created_at').eq('id', userId).maybeSingle(),
+      const profileQuery = () => supabase.from('users').select('id, username, avatar_url, created_at').eq('id', userId).maybeSingle();
+      let profileResult = await profileQuery();
+      if (profileResult.error) throw profileResult.error;
+
+      if (!profileResult.data) {
+        console.warn(`Profile row missing for ${userId}; creating one now.`);
+        const { data: createdProfile, error: createError } = await supabase
+          .from('users')
+          .upsert({
+            id: userId,
+            username: null,
+            avatar_url: null,
+          })
+          .select('id, username, avatar_url, created_at')
+          .single();
+
+        if (createError) {
+          throw createError;
+        }
+
+        profileResult = { data: createdProfile, error: null } as typeof profileResult;
+      }
+
+      const [tripsResult, draftTripsResult, collectionsResult] = await Promise.all([
         supabase
           .from('trips')
           .select('id, title, is_public, created_at, total_budget, total_distance_miles, total_drive_time_minutes, total_gas_cost')
@@ -32,12 +54,6 @@ export function createProfileRouter() {
           .order('created_at', { ascending: false }),
         supabase.from('collections').select('id, name, created_at').eq('user_id', userId).order('created_at', { ascending: false }),
       ]);
-
-      if (profileResult.error) throw profileResult.error;
-      if (!profileResult.data) {
-        res.status(404).json({ error: 'Profile not found.' });
-        return;
-      }
 
       const stats = await getUserSocialCounts(userId);
 
