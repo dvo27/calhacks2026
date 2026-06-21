@@ -452,12 +452,12 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
         return;
       }
 
+      // Only write the fields that were actually provided — spreading a forced
+      // `location_coords: ... ?? null` here would wipe coordinates on any partial
+      // update (e.g. setting just a rating), breaking the map on reload.
       const { data, error } = await supabase
         .from('activities')
-        .update({
-          ...updatePayload,
-          location_coords: updatePayload.location_coords ?? null,
-        })
+        .update(updatePayload)
         .eq('id', activityId)
         .select('id, trip_id, title, description, cost, start_time, end_time, location_coords, location_name, rating, tags, venue_hours, weather_snapshot, created_at')
         .single<ActivityRow>();
