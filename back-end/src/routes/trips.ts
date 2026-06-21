@@ -5,6 +5,7 @@ import { requireAuth } from '../middleware/auth.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { ensureTripOwnership, getTripEngagementCounts } from '../services/metrics.js';
 import { getTripTimeline, invalidateTripTimeline } from '../services/timeline.js';
+import { suggestPlacesForLocation } from '../services/places.js';
 
 type TripsRouterOptions = {
   itineraryQueue: Queue;
@@ -248,6 +249,31 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
     } catch (error) {
       console.error('Error creating trip draft:', error);
       res.status(500).json({ error: 'Failed to create trip draft.' });
+    }
+  });
+
+  router.post('/place-suggestions', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const { locationQuery, radiusMeters, limit } = req.body ?? {};
+
+      if (!locationQuery || typeof locationQuery !== 'string') {
+        res.status(400).json({ error: 'locationQuery is required to fetch nearby places.' });
+        return;
+      }
+
+      const parsedRadius = Number(radiusMeters);
+      const parsedLimit = Number(limit);
+
+      const data = await suggestPlacesForLocation(
+        locationQuery,
+        Number.isFinite(parsedRadius) && parsedRadius > 0 ? parsedRadius : 3000,
+        Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 20
+      );
+
+      res.status(200).json(data);
+    } catch (error) {
+      console.error('Error fetching place suggestions:', error);
+      res.status(500).json({ error: 'Failed to fetch place suggestions.' });
     }
   });
 

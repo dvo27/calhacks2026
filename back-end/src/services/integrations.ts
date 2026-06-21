@@ -106,6 +106,7 @@ function buildResponseFormat() {
   };
 }
 
+
 export async function callASIOneParser(rawText: string): Promise<ASIOneActivity[]> {
   const baseUrl = getAsiBaseUrl();
 
@@ -209,6 +210,7 @@ function fallbackParsedActivities(): ASIOneActivity[] {
     },
   ];
 }
+
 
 export async function schedulePokeReminder(userId: string, activityName: string, startTime: string) {
   console.log(`Scheduling push reminder notification with Poke for: "${activityName}"`);
