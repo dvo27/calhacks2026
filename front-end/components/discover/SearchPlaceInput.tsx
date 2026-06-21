@@ -4,7 +4,10 @@ import { Colors } from '@/constants/colors';
 import { getPlaceSuggestions, PlaceSuggestion } from '@/lib/api';
 import * as Location from 'expo-location';
 
-const DEFAULT_LOCATION_QUERY = 'Los Angeles, CA';
+const DEFAULT_LOCATION_QUERY = 'Current location';
+const SEARCH_RADIUS_METERS = 7200;
+const SEARCH_LIMIT = 24;
+const REVEAL_RADIUSES = [900, 1800, 3600, 7200];
 
 export interface PlaceResult {
   placeId: string;
@@ -34,6 +37,8 @@ export default function SearchPlaceInput({
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRunRef = useRef(0);
   const originCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
+  const locationReadyRef = useRef<Promise<void> | null>(null);
+  const resolveLocationReadyRef = useRef<(() => void) | null>(null);
   const onDeviceLocationResolvedRef = useRef(onDeviceLocationResolved);
   const onSearchOriginResolvedRef = useRef(onSearchOriginResolved);
 
@@ -44,6 +49,9 @@ export default function SearchPlaceInput({
 
   useEffect(() => {
     let cancelled = false;
+    locationReadyRef.current = new Promise<void>((resolve) => {
+      resolveLocationReadyRef.current = resolve;
+    });
 
     async function requestLocation() {
       try {
@@ -73,6 +81,9 @@ export default function SearchPlaceInput({
           console.warn('Location permission request failed', error);
           setLocationStatus('denied');
         }
+      } finally {
+        resolveLocationReadyRef.current?.();
+        resolveLocationReadyRef.current = null;
       }
     }
 
@@ -80,6 +91,8 @@ export default function SearchPlaceInput({
 
     return () => {
       cancelled = true;
+      resolveLocationReadyRef.current?.();
+      resolveLocationReadyRef.current = null;
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
   }, []);
@@ -100,36 +113,40 @@ export default function SearchPlaceInput({
     searchRunRef.current = runId;
     setLoading(true);
     try {
+      if (!originCoordsRef.current && locationStatus === 'loading' && locationReadyRef.current) {
+        await locationReadyRef.current;
+      }
+
       const originQuery = locationQuery.trim() || DEFAULT_LOCATION_QUERY;
       const searchQuery = text.trim();
-      const radii = [900, 1800, 3600, 7200];
       const seen = new Map<string, PlaceSuggestion>();
       const originCoords = originCoordsRef.current ?? undefined;
 
       onResults([]);
 
-      for (const radiusMeters of radii) {
+      const data = await getPlaceSuggestions(originQuery, searchQuery, originCoords, SEARCH_RADIUS_METERS, SEARCH_LIMIT);
+      if (searchRunRef.current !== runId) {
+        return;
+      }
+
+      onSearchOriginResolvedRef.current?.(data.origin);
+
+      const stagedPlaces = [...data.places].sort((left, right) => left.distanceMeters - right.distanceMeters);
+      for (const radiusMeters of REVEAL_RADIUSES) {
         if (searchRunRef.current !== runId) {
           return;
         }
 
-        const data = await getPlaceSuggestions(originQuery, searchQuery, originCoords, radiusMeters, 8);
-        if (radiusMeters === radii[0]) {
-          onSearchOriginResolvedRef.current?.(data.origin);
-        }
-        for (const place of data.places) {
+        for (const place of stagedPlaces) {
+          if (place.distanceMeters > radiusMeters) continue;
           const key = `${place.osmType}-${place.osmId}`;
           if (!seen.has(key)) {
             seen.set(key, place);
           }
         }
 
-        if (searchRunRef.current !== runId) {
-          return;
-        }
-
         onResults([...seen.values()]);
-        await new Promise((resolve) => setTimeout(resolve, 180));
+        await new Promise((resolve) => setTimeout(resolve, 140));
       }
     } catch (err) {
       if (searchRunRef.current === runId) {

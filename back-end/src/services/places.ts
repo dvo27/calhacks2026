@@ -27,6 +27,7 @@ export type NearbyPlace = {
   name: string;
   category: string;
   subcategory: string | null;
+  priceTier: number | null;
   displayAddress: string | null;
   lat: number;
   lng: number;
@@ -35,7 +36,7 @@ export type NearbyPlace = {
   openingHours: string | null;
   website: string | null;
   phone: string | null;
-  source: 'azure-maps' | 'fallback';
+  source: 'foursquare' | 'fallback';
 };
 
 const DEFAULT_LOCATION_QUERY = 'Los Angeles, CA';
@@ -45,10 +46,13 @@ const DEFAULT_ORIGIN: OriginLocation = {
   lng: -118.2437,
 };
 
-const AZURE_MAPS_BASE_URL = (getBackendEnv('AZURE_MAPS_BASE_URL') ?? 'https://atlas.microsoft.com').trim().replace(/\/+$/, '');
-const AZURE_MAPS_KEY = getBackendEnv('AZURE_MAPS_KEY', 'AZURE_MAPS_SUBSCRIPTION_KEY');
-const AZURE_MAPS_API_VERSION = getBackendEnv('AZURE_MAPS_API_VERSION') ?? '2026-01-01';
-const AZURE_MAPS_LANGUAGE = getBackendEnv('AZURE_MAPS_LANGUAGE') ?? 'en-US';
+const FOURSQUARE_BASE_URL = (getBackendEnv('FOURSQUARE_BASE_URL') ?? 'https://places-api.foursquare.com').trim().replace(/\/+$/, '');
+const FOURSQUARE_KEY = getBackendEnv('FOURSQUARE_API_KEY', 'FOURSQUARE_PLACES_API_KEY');
+const FOURSQUARE_API_VERSION = getBackendEnv('FOURSQUARE_API_VERSION') ?? '2025-06-17';
+
+// Free-tier Places API fields. Premium fields (price, hours, rating, popularity)
+// return HTTP 429 / billing errors on the free plan, so they are intentionally omitted.
+const FOURSQUARE_FIELDS = 'fsq_place_id,name,latitude,longitude,location,categories,distance,website,tel';
 
 const FALLBACK_PLACES: FallbackPlaceSeed[] = [
   {
@@ -159,62 +163,48 @@ const SEARCH_STOP_WORDS = new Set([
   'good',
 ]);
 
-type AzureMapsGeometry = {
-  coordinates?: number[];
-};
-
-type AzureMapsAddress = {
-  formattedAddress?: string;
-  freeformAddress?: string;
-};
-
-type AzureMapsPoi = {
+type FoursquareCategory = {
+  id?: string;
   name?: string;
-  categories?: string[];
-  phone?: string;
-  url?: string;
+  short_name?: string;
+  plural_name?: string;
 };
 
-type AzureMapsGeocodeFeature = {
-  geometry?: AzureMapsGeometry;
-  properties?: {
-    address?: AzureMapsAddress;
-  };
+type FoursquareLocation = {
+  formatted_address?: string;
+  name?: string;
+  address?: string;
+  locality?: string;
+  region?: string;
+  postcode?: string;
+  country?: string;
+  neighborhood?: string[];
 };
 
-type AzureMapsSearchResult = {
-  geometry?: AzureMapsGeometry;
-  position?: { lat?: number; lon?: number };
-  poi?: AzureMapsPoi;
-  address?: AzureMapsAddress;
-  dist?: number;
-  entityType?: string;
-  type?: string;
-  openingHours?: unknown;
+type FoursquarePrice = {
+  tier?: number;
+  message?: string;
 };
 
-type AzureMapsGeocodeResponse = {
-  features?: AzureMapsGeocodeFeature[];
+type FoursquarePlace = {
+  fsq_place_id?: string;
+  name?: string;
+  latitude?: number;
+  longitude?: number;
+  distance?: number;
+  categories?: FoursquareCategory[];
+  location?: FoursquareLocation;
+  price?: FoursquarePrice | number | string;
+  tel?: string;
+  website?: string;
+  hours?: unknown;
+  chains?: unknown;
+  popularity?: number;
+  rating?: number;
 };
 
-type AzureMapsNearbyResponse = {
-  results?: AzureMapsSearchResult[];
-  features?: AzureMapsSearchResult[];
-};
-
-type AzureMapsAutocompleteFeature = {
-  geometry?: AzureMapsGeometry;
-  properties?: {
-    name?: string;
-    type?: string;
-    typeGroup?: string;
-    address?: AzureMapsAddress;
-    poi?: AzureMapsPoi;
-  };
-};
-
-type AzureMapsAutocompleteResponse = {
-  features?: AzureMapsAutocompleteFeature[];
+type FoursquareSearchResponse = {
+  results?: FoursquarePlace[];
 };
 
 function toFiniteNumber(value: unknown) {
@@ -308,27 +298,15 @@ function stableNumericId(seed: string) {
   return hash >>> 0;
 }
 
-function extractCoordinates(value: AzureMapsGeometry | undefined): { lat: number; lng: number } | null {
-  const coordinates = value?.coordinates;
-  if (!coordinates || coordinates.length < 2) {
+function extractCoordinates(place: FoursquarePlace): { lat: number; lng: number } | null {
+  const latitude = toFiniteNumber(place.latitude);
+  const longitude = toFiniteNumber(place.longitude);
+
+  if (latitude === null || longitude === null) {
     return null;
   }
 
-  const lng = toFiniteNumber(coordinates[0]);
-  const lat = toFiniteNumber(coordinates[1]);
-
-  if (lat === null || lng === null) {
-    return null;
-  }
-
-  return { lat, lng };
-}
-
-function radiusToBbox(origin: OriginLocation, radiusMeters: number) {
-  const latDelta = radiusMeters / 111_320;
-  const lngDelta = radiusMeters / (111_320 * Math.max(Math.cos((origin.lat * Math.PI) / 180), 0.2));
-
-  return `${origin.lng - lngDelta},${origin.lat - latDelta},${origin.lng + lngDelta},${origin.lat + latDelta}`;
+  return { lat: latitude, lng: longitude };
 }
 
 function buildFallbackPlace(place: FallbackPlaceSeed, origin: OriginLocation): NearbyPlace {
@@ -338,6 +316,7 @@ function buildFallbackPlace(place: FallbackPlaceSeed, origin: OriginLocation): N
     name: place.name,
     category: place.category,
     subcategory: place.subcategory,
+    priceTier: null,
     displayAddress: place.displayAddress,
     lat: place.lat,
     lng: place.lng,
@@ -350,90 +329,93 @@ function buildFallbackPlace(place: FallbackPlaceSeed, origin: OriginLocation): N
   };
 }
 
-function buildAzurePlace(result: AzureMapsSearchResult, origin: OriginLocation): NearbyPlace | null {
-  const coordinates = extractCoordinates(result.geometry) ?? (
-    typeof result.position?.lat === 'number' && typeof result.position?.lon === 'number'
-      ? { lat: result.position.lat, lng: result.position.lon }
-      : null
-  );
-
-  if (!coordinates) {
-    return null;
+function extractPriceTier(price: FoursquarePlace['price']): number | null {
+  if (typeof price === 'number' && Number.isFinite(price)) {
+    return price;
   }
 
-  const categories = result.poi?.categories ?? [];
-  const name = result.poi?.name ?? result.address?.freeformAddress ?? result.entityType ?? 'Place';
-  const displayAddress = result.address?.freeformAddress ?? null;
-  const category = categories[0] ?? result.entityType ?? result.type ?? 'place';
-  const subcategory = categories[1] ?? null;
+  if (typeof price === 'string') {
+    const parsed = Number(price);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  if (price && typeof price === 'object' && Number.isFinite(price.tier ?? NaN)) {
+    return price.tier ?? null;
+  }
+
+  return null;
+}
+
+function classifyCategory(place: FoursquarePlace): string {
+  const categories = place.categories ?? [];
+  const labels = categories.flatMap((category) => [category.short_name, category.name, category.plural_name]).filter(
+    (value): value is string => Boolean(value)
+  );
+  const normalized = labels.join(' ').toLowerCase();
+
+  if (normalized.match(/\b(bar|nightclub|pub|cocktail|beer)\b/)) return 'nightlife';
+  if (normalized.match(/\b(hotel|resort|inn|lodging)\b/)) return 'attractions';
+  if (normalized.match(/\b(trail|hiking|park|nature|outdoor|garden|beach)\b/)) return 'attractions';
+  if (normalized.match(/\b(shop|store|mall|market|boutique)\b/)) return 'shopping';
+  if (normalized.match(/\b(cafe|coffee|restaurant|diner|bakery|food|tea|burger|pizza|barbecue)\b/)) return 'food';
+
+  return 'attractions';
+}
+
+function buildDisplayAddress(place: FoursquarePlace) {
+  const location = place.location;
+  if (!location) return null;
+
+  return (
+    location.formatted_address
+    ?? [location.address, location.locality, location.region, location.postcode].filter(Boolean).join(', ')
+    ?? null
+  );
+}
+
+function buildFoursquarePlace(place: FoursquarePlace, origin: OriginLocation): NearbyPlace | null {
+  const coordinates = extractCoordinates(place);
+  if (!coordinates) return null;
+
+  const categories = (place.categories ?? [])
+    .map((category) => category.short_name ?? category.name ?? category.plural_name)
+    .filter((value): value is string => Boolean(value));
+  const name = place.name ?? categories[0] ?? 'Place';
+  const displayAddress = buildDisplayAddress(place);
+  const category = classifyCategory(place);
+  const priceTier = extractPriceTier(place.price);
 
   return {
     osmType: 'node',
-    osmId: stableNumericId(`${name}:${coordinates.lat}:${coordinates.lng}`),
+    osmId: stableNumericId(place.fsq_place_id ?? `${name}:${coordinates.lat}:${coordinates.lng}`),
     name,
     category,
-    subcategory,
+    subcategory: categories[0] ?? null,
+    priceTier,
     displayAddress,
     lat: coordinates.lat,
     lng: coordinates.lng,
-    distanceMeters: typeof result.dist === 'number' ? result.dist : haversineDistanceMeters(origin.lat, origin.lng, coordinates.lat, coordinates.lng),
+    distanceMeters: typeof place.distance === 'number' ? place.distance : haversineDistanceMeters(origin.lat, origin.lng, coordinates.lat, coordinates.lng),
     tags: [
       ...categories,
-      result.entityType,
-      result.type,
       displayAddress,
+      priceTier !== null ? `price:${priceTier}` : null,
     ]
       .filter((value): value is string => typeof value === 'string' && value.length > 0)
       .slice(0, 12),
-    openingHours: null,
-    website: result.poi?.url ?? null,
-    phone: result.poi?.phone ?? null,
-    source: 'azure-maps',
+    openingHours: place.hours ? JSON.stringify(place.hours) : null,
+    website: place.website ?? null,
+    phone: place.tel ?? null,
+    source: 'foursquare',
   };
 }
 
-function buildAutocompletePlace(feature: AzureMapsAutocompleteFeature, origin: OriginLocation): NearbyPlace | null {
-  const coordinates = extractCoordinates(feature.geometry);
-  if (!coordinates) {
-    return null;
+async function foursquareFetchJson<T>(path: string, params: Record<string, string | number | boolean | undefined>) {
+  if (!FOURSQUARE_KEY) {
+    throw new Error('FOURSQUARE_API_KEY is not configured.');
   }
 
-  const properties = feature.properties ?? {};
-  const poi = properties.poi ?? {};
-  const categories = poi.categories ?? [];
-  const name = poi.name ?? properties.name ?? properties.address?.formattedAddress ?? 'Place';
-  const category = categories[0] ?? properties.typeGroup ?? properties.type ?? 'place';
-  const subcategory = categories[1] ?? null;
-  const displayAddress = properties.address?.formattedAddress ?? properties.address?.freeformAddress ?? null;
-
-  return {
-    osmType: 'node',
-    osmId: stableNumericId(`${name}:${coordinates.lat}:${coordinates.lng}`),
-    name,
-    category,
-    subcategory,
-    displayAddress,
-    lat: coordinates.lat,
-    lng: coordinates.lng,
-    distanceMeters: haversineDistanceMeters(origin.lat, origin.lng, coordinates.lat, coordinates.lng),
-    tags: [properties.typeGroup, properties.type, ...categories, displayAddress]
-      .filter((value): value is string => typeof value === 'string' && value.length > 0)
-      .slice(0, 12),
-    openingHours: null,
-    website: poi.url ?? null,
-    phone: poi.phone ?? null,
-    source: 'azure-maps',
-  };
-}
-
-async function azureMapsFetchJson<T>(path: string, params: Record<string, string | number | undefined>) {
-  if (!AZURE_MAPS_KEY) {
-    throw new Error('AZURE_MAPS_KEY is not configured.');
-  }
-
-  const url = new URL(path, `${AZURE_MAPS_BASE_URL}/`);
-  url.searchParams.set('api-version', AZURE_MAPS_API_VERSION);
-  url.searchParams.set('subscription-key', AZURE_MAPS_KEY);
+  const url = new URL(path, `${FOURSQUARE_BASE_URL}/`);
 
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined && value !== null && value !== '') {
@@ -444,40 +426,17 @@ async function azureMapsFetchJson<T>(path: string, params: Record<string, string
   const response = await fetch(url, {
     headers: {
       accept: 'application/json',
-      'Accept-Language': AZURE_MAPS_LANGUAGE,
+      Authorization: `Bearer ${FOURSQUARE_KEY}`,
+      'X-Places-Api-Version': FOURSQUARE_API_VERSION,
     },
   });
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => '');
-    throw new Error(`Azure Maps request failed with status ${response.status}: ${errorText || response.statusText}`);
+    throw new Error(`Foursquare request failed with status ${response.status}: ${errorText || response.statusText}`);
   }
 
   return response.json() as Promise<T>;
-}
-
-async function geocodeLocation(locationQuery: string): Promise<OriginLocation> {
-  const data = await azureMapsFetchJson<AzureMapsGeocodeResponse>('/geocode', {
-    query: locationQuery,
-    top: 1,
-    view: 'Auto',
-  });
-
-  const firstResult = data.features?.[0];
-  const coordinates = extractCoordinates(firstResult?.geometry);
-  const displayName = firstResult?.properties?.address?.formattedAddress
-    ?? firstResult?.properties?.address?.freeformAddress
-    ?? locationQuery;
-
-  if (!coordinates) {
-    throw new Error(`No geocoding result found for "${locationQuery}"`);
-  }
-
-  return {
-    displayName,
-    lat: coordinates.lat,
-    lng: coordinates.lng,
-  };
 }
 
 async function resolveOrigin(locationQuery: string, originCoords?: OriginCoords): Promise<OriginLocation> {
@@ -487,34 +446,33 @@ async function resolveOrigin(locationQuery: string, originCoords?: OriginCoords)
     Number.isFinite(originCoords.longitude)
   ) {
     return {
-      displayName: locationQuery,
+      displayName: 'Current location',
       lat: originCoords.latitude,
       lng: originCoords.longitude,
     };
   }
 
-  try {
-    return await geocodeLocation(locationQuery);
-  } catch (error) {
-    console.warn(`Location geocoding failed for "${locationQuery}", using fallback origin:`, error);
-    return DEFAULT_ORIGIN;
-  }
+  return {
+    displayName: locationQuery || DEFAULT_LOCATION_QUERY,
+    lat: DEFAULT_ORIGIN.lat,
+    lng: DEFAULT_ORIGIN.lng,
+  };
 }
 
-async function fetchAzurePlaces(origin: OriginLocation, radiusMeters: number, limit: number, searchQuery: string) {
+async function fetchFoursquarePlaces(origin: OriginLocation, radiusMeters: number, limit: number, searchQuery: string) {
   const query = searchQuery.trim() || 'place';
-  const data = await azureMapsFetchJson<AzureMapsAutocompleteResponse>('/geocode:autocomplete', {
+  const data = await foursquareFetchJson<FoursquareSearchResponse>('/places/search', {
     query,
-    coordinates: `${origin.lng},${origin.lat}`,
-    bbox: radiusToBbox(origin, radiusMeters),
-    resultTypeGroups: 'Place',
-    top: limit,
-    view: 'Auto',
+    ll: `${origin.lat},${origin.lng}`,
+    radius: Math.max(1, radiusMeters),
+    limit,
+    sort: 'DISTANCE',
+    fields: FOURSQUARE_FIELDS,
   });
 
-  const rawResults = data.features ?? [];
+  const rawResults = data.results ?? [];
   return rawResults
-    .map((feature) => buildAutocompletePlace(feature, origin))
+    .map((place) => buildFoursquarePlace(place, origin))
     .filter((place): place is NearbyPlace => Boolean(place));
 }
 
@@ -548,14 +506,14 @@ export async function suggestPlacesForLocation(
   const origin = await resolveOrigin(locationQuery.trim() || DEFAULT_LOCATION_QUERY, originCoords);
   const trimmedSearchQuery = searchQuery.trim();
   const searchTerms = normalizeSearchTerms(searchQuery);
-  const topLimit = Math.max(limit, 1) * 3;
+  const topLimit = Math.max(limit, 1) * 2;
 
   let places: NearbyPlace[] = [];
 
   try {
-    places = await fetchAzurePlaces(origin, radiusMeters, topLimit, trimmedSearchQuery);
+    places = await fetchFoursquarePlaces(origin, radiusMeters, topLimit, trimmedSearchQuery);
   } catch (error) {
-    console.warn(`Azure Maps place lookup failed for "${locationQuery}", using fallback places:`, error);
+    console.warn(`Foursquare place lookup failed for "${locationQuery}", using fallback places:`, error);
     places = buildFallbackPlaces(origin, radiusMeters, topLimit, trimmedSearchQuery);
   }
 
