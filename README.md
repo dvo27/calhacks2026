@@ -2,18 +2,16 @@
 
 ## Backend env
 
-Add an Azure Maps key to the backend environment:
+Add a Foursquare API key to the backend environment:
 
 ```bash
-AZURE_MAPS_KEY=your_azure_maps_subscription_key
+FOURSQUARE_API_KEY=your_foursquare_api_key
 ```
 
 Optional overrides:
 
 ```bash
-AZURE_MAPS_BASE_URL=https://atlas.microsoft.com
-AZURE_MAPS_API_VERSION=2026-01-01
-AZURE_MAPS_LANGUAGE=en-US
+FOURSQUARE_BASE_URL=https://api.foursquare.com
 ```
 
-The place-suggestions route now uses Azure Maps for geocoding and nearby POI search, with a local fallback if the service is unavailable.
+The place-suggestions route now uses Foursquare for nearby POI search, with a local fallback if the service is unavailable.
