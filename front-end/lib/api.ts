@@ -112,6 +112,40 @@ export interface PlaceSuggestionsResponse {
   places: PlaceSuggestion[];
 }
 
+export interface VoiceRecommendationsResponse extends PlaceSuggestionsResponse {
+  transcript: string;
+  intent: {
+    location_query: string | null;
+    search_query: string;
+    radius_meters: number;
+    limit: number;
+  };
+}
+
+export interface VoiceItineraryResponse {
+  transcript: string;
+  intent: {
+    location_query: string | null;
+    search_query: string;
+    radius_meters: number;
+    limit: number;
+  };
+  trip: { id: number; title: string; is_public: boolean; created_at: string };
+  activities: Array<{
+    title: string;
+    location_name: string;
+    lat: number;
+    lng: number;
+    start_time: string;
+    end_time: string;
+    tags: string[];
+    cost: number;
+    description?: string;
+    rating?: number | null;
+  }>;
+  activitiesCreated: number;
+}
+
 export function getPlaceSuggestions(
   locationQuery: string,
   searchQuery = '',
@@ -130,6 +164,41 @@ export function getPlaceSuggestions(
       radiusMeters,
       limit,
     }),
+  });
+}
+
+export function getVoiceRecommendations(
+  payload: {
+    base64Audio: string;
+    mimeType?: string;
+    locationQuery?: string;
+    originCoords?: { latitude: number; longitude: number };
+    radiusMeters?: number;
+    limit?: number;
+  },
+  signal?: AbortSignal
+) {
+  return apiFetch<VoiceRecommendationsResponse>('/api/trips/voice-recommendations', {
+    method: 'POST',
+    signal,
+    body: JSON.stringify(payload),
+  });
+}
+
+export function generateVoiceItinerary(
+  payload: {
+    base64Audio: string;
+    mimeType?: string;
+    title?: string;
+    locationQuery?: string;
+    originCoords?: { latitude: number; longitude: number };
+  },
+  signal?: AbortSignal
+) {
+  return apiFetch<VoiceItineraryResponse>('/api/trips/voice-generate', {
+    method: 'POST',
+    signal,
+    body: JSON.stringify(payload),
   });
 }
 

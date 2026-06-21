@@ -4,9 +4,16 @@ import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { ensureTripOwnership, getTripEngagementCounts } from '../services/metrics.js';
+import { getCachedMainFeed, invalidateMainFeedCache, setCachedMainFeed } from '../services/feed.js';
 import { getTripTimeline, invalidateTripTimeline } from '../services/timeline.js';
 import { suggestPlacesForLocation } from '../services/places.js';
 import { uploadActivityImage } from '../services/storage.js';
+import {
+  callASIOneParser,
+  callASIOneVoiceIntent,
+  schedulePokeReminder,
+  transcribeDeepgramAudio,
+} from '../services/integrations.js';
 
 type TripsRouterOptions = {
   itineraryQueue: Queue;
@@ -347,6 +354,8 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
           rawText,
         });
 
+        await invalidateMainFeedCache();
+
         res.status(202).json({
           success: true,
           message: 'Itinerary submitted successfully. Mapping engines are compiling routes.',
@@ -428,8 +437,184 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
     }
   });
 
+  router.post('/voice-recommendations', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized: Invalid context identity.' });
+        return;
+      }
+
+      const { base64Audio, mimeType, locationQuery, originCoords, radiusMeters, limit } = req.body ?? {};
+
+      if (!base64Audio || typeof base64Audio !== 'string') {
+        res.status(400).json({ error: 'base64Audio is required for voice recommendations.' });
+        return;
+      }
+
+      const transcription = await transcribeDeepgramAudio(
+        base64Audio,
+        typeof mimeType === 'string' && mimeType.trim() ? mimeType.trim() : 'audio/mp4'
+      );
+      const locationContext =
+        originCoords && typeof originCoords === 'object' && Number.isFinite(Number((originCoords as { latitude?: unknown }).latitude))
+          ? {
+              label: typeof locationQuery === 'string' && locationQuery.trim() ? locationQuery.trim() : 'Current location',
+              latitude: Number((originCoords as { latitude?: unknown }).latitude),
+              longitude: Number((originCoords as { longitude?: unknown }).longitude),
+            }
+          : {
+              label: typeof locationQuery === 'string' && locationQuery.trim() ? locationQuery.trim() : null,
+            };
+
+      const intent = await callASIOneVoiceIntent(transcription, locationContext);
+
+      const parsedRadius = Number(radiusMeters);
+      const parsedLimit = Number(limit);
+      const resolvedLocationQuery = intent.location_query ?? (typeof locationQuery === 'string' ? locationQuery : 'Current location');
+      const resolvedSearchQuery = intent.search_query || transcription.transcript;
+
+      const data = await suggestPlacesForLocation(
+        resolvedLocationQuery,
+        resolvedSearchQuery,
+        originCoords && typeof originCoords === 'object' ? originCoords : undefined,
+        Number.isFinite(parsedRadius) && parsedRadius > 0 ? parsedRadius : intent.radius_meters,
+        Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : intent.limit
+      );
+
+      res.status(200).json({
+        transcript: transcription.transcript,
+        intent,
+        ...data,
+      });
+    } catch (error) {
+      console.error('Error fetching voice recommendations:', error);
+      res.status(500).json({ error: 'Failed to fetch voice recommendations.' });
+    }
+  });
+
+  router.post('/voice-generate', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized: Invalid context identity.' });
+        return;
+      }
+
+      const { base64Audio, mimeType, title, locationQuery, originCoords } = req.body ?? {};
+      if (!base64Audio || typeof base64Audio !== 'string') {
+        res.status(400).json({ error: 'base64Audio is required for voice itinerary generation.' });
+        return;
+      }
+
+      const transcription = await transcribeDeepgramAudio(
+        base64Audio,
+        typeof mimeType === 'string' && mimeType.trim() ? mimeType.trim() : 'audio/mp4'
+      );
+      const locationContext =
+        originCoords && typeof originCoords === 'object' && Number.isFinite(Number((originCoords as { latitude?: unknown }).latitude))
+          ? {
+              label: typeof locationQuery === 'string' && locationQuery.trim() ? locationQuery.trim() : 'Current location',
+              latitude: Number((originCoords as { latitude?: unknown }).latitude),
+              longitude: Number((originCoords as { longitude?: unknown }).longitude),
+            }
+          : {
+              label: typeof locationQuery === 'string' && locationQuery.trim() ? locationQuery.trim() : null,
+            };
+
+      const itineraryInput = JSON.stringify({
+        transcript: transcription.transcript,
+        location_context: locationContext,
+      });
+      const parsedActivities = await callASIOneParser(itineraryInput, locationContext);
+      const tripTitle =
+        typeof title === 'string' && title.trim()
+          ? title.trim()
+          : `${transcription.transcript.trim().slice(0, 48) || 'Voice'} itinerary`;
+
+      const { data: trip, error: tripError } = await supabase
+        .from('trips')
+        .insert({
+          user_id: userId,
+          title: tripTitle,
+          is_public: false,
+          total_budget: 0,
+          total_distance_miles: null,
+          total_drive_time_minutes: null,
+          total_gas_cost: null,
+        })
+        .select('id, title, is_public, created_at')
+        .single();
+
+      if (tripError || !trip) {
+        throw tripError ?? new Error('Failed to create trip shell.');
+      }
+
+      let totalCalculatedCost = 0;
+      for (const activity of parsedActivities) {
+        totalCalculatedCost += activity.cost;
+
+        const { error: activityError } = await supabase
+          .from('activities')
+          .insert({
+            trip_id: trip.id,
+            title: activity.title,
+            description: activity.description ?? null,
+            location_name: activity.location_name,
+            start_time: activity.start_time,
+            end_time: activity.end_time,
+            tags: activity.tags,
+            cost: activity.cost,
+            rating: activity.rating ?? null,
+            weather_snapshot: activity.weather_snapshot ?? null,
+            venue_hours: activity.venue_hours ?? null,
+            location_coords: `POINT(${activity.lng} ${activity.lat})`,
+          });
+
+        if (activityError) {
+          throw activityError;
+        }
+
+        await schedulePokeReminder(userId, activity.title, activity.start_time);
+      }
+
+      const { error: tripUpdateError } = await supabase
+        .from('trips')
+        .update({
+          total_budget: totalCalculatedCost,
+          total_distance_miles: 5.8,
+          total_drive_time_minutes: 22,
+          is_public: true,
+        })
+        .eq('id', trip.id);
+
+      if (tripUpdateError) {
+        throw tripUpdateError;
+      }
+
+      await invalidateTripTimeline(trip.id);
+      await invalidateMainFeedCache();
+
+      res.status(201).json({
+        transcript: transcription.transcript,
+        trip,
+        activities: parsedActivities,
+        activitiesCreated: parsedActivities.length,
+      });
+    } catch (error) {
+      console.error('Error generating voice itinerary:', error);
+      res.status(500).json({ error: 'Failed to generate itinerary from voice.' });
+    }
+  });
+
   router.get('/feed', async (_req, res) => {
     try {
+      const cachedFeed = await getCachedMainFeed<{ trips: unknown[] }>();
+      if (cachedFeed) {
+        res.status(200).json(cachedFeed);
+        return;
+      }
+
       const { data: publicTrips, error } = await supabase
         .from('trips')
         .select(`
@@ -453,7 +638,10 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
         }))
       );
 
-      res.status(200).json({ trips: tripsWithCounts });
+      const payload = { trips: tripsWithCounts };
+      await setCachedMainFeed(payload);
+
+      res.status(200).json(payload);
     } catch (error) {
       console.error('Error fetching dashboard discover feeds:', error);
       res.status(500).json({ error: 'Failed to retrieve feed arrays.' });
@@ -567,6 +755,7 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
 
       await syncTripRollups(tripId);
       await invalidateTripTimeline(tripId);
+      await invalidateMainFeedCache();
 
       res.status(201).json({ activity: data });
     } catch (error) {
@@ -635,6 +824,7 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
       }
 
       await invalidateTripTimeline(activity.trip_id);
+      await invalidateMainFeedCache();
 
       res.status(201).json({ media });
     } catch (error) {
@@ -697,6 +887,7 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
 
       await syncTripRollups(existingActivity.trip_id);
       await invalidateTripTimeline(existingActivity.trip_id);
+      await invalidateMainFeedCache();
 
       res.status(200).json({ activity: data });
     } catch (error) {
@@ -747,6 +938,7 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
 
       await syncTripRollups(existingActivity.trip_id);
       await invalidateTripTimeline(existingActivity.trip_id);
+      await invalidateMainFeedCache();
 
       res.status(204).send();
     } catch (error) {
@@ -786,6 +978,8 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
         res.status(500).json({ error: 'Failed to publish trip.' });
         return;
       }
+
+      await invalidateMainFeedCache();
 
       res.status(200).json({ trip: data });
     } catch (error) {
@@ -839,6 +1033,7 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
       }
 
       await invalidateTripTimeline(id);
+      await invalidateMainFeedCache();
 
       res.status(200).json({ trip: data });
     } catch (error) {

@@ -2,6 +2,7 @@ import { Router, type Response } from 'express';
 import { supabase } from '../services/supabase.js';
 import { requireAuth } from '../middleware/auth.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
+import { invalidateMainFeedCache } from '../services/feed.js';
 import { getPublicUsersByIds } from '../services/users.js';
 import { getTripEngagementCounts } from '../services/metrics.js';
 
@@ -61,6 +62,7 @@ export function createSocialRouter() {
       });
 
       if (error) throw error;
+      await invalidateMainFeedCache();
 
       res.status(201).json({ liked: true, engagement: await getTripEngagementCounts(tripId) });
     } catch (error) {
@@ -86,6 +88,7 @@ export function createSocialRouter() {
         .eq('user_id', userId);
 
       if (error) throw error;
+      await invalidateMainFeedCache();
 
       res.status(200).json({ liked: false, engagement: await getTripEngagementCounts(tripId) });
     } catch (error) {
@@ -156,6 +159,7 @@ export function createSocialRouter() {
 
       if (error || !data) throw error;
 
+      await invalidateMainFeedCache();
       res.status(201).json({ comment: data, engagement: await getTripEngagementCounts(tripId) });
     } catch (error) {
       console.error('Error adding comment:', error);
@@ -222,6 +226,7 @@ export function createSocialRouter() {
 
       if (error || !data) throw error;
 
+      await invalidateMainFeedCache();
       res.status(201).json({ share: data, engagement: await getTripEngagementCounts(tripId) });
     } catch (error) {
       console.error('Error sharing trip:', error);
