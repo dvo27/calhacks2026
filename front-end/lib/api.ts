@@ -425,3 +425,18 @@ export interface UserStats {
 export function getUserById(userId: string) {
   return apiFetch<{ profile: PublicUser; stats: UserStats; trips: TripSummary[] }>(`/api/profile/uid/${userId}`);
 }
+
+export function updateProfile(payload: { username?: string; avatar_url?: string }) {
+  return apiFetch<{ profile: PublicUser }>('/api/profile/me', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function getMyFollowers() {
+  return apiFetch<{ followers: Array<{ created_at: string; follower: PublicUser | null }> }>('/api/profile/me/followers');
+}
+
+export function getMyFollowing() {
+  return apiFetch<{ following: Array<{ created_at: string; following: PublicUser | null }> }>('/api/profile/me/following');
+}

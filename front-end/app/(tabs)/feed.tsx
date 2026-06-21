@@ -63,8 +63,8 @@ export default function FeedScreen() {
         <TouchableOpacity style={styles.ctaCard} onPress={handleNewDay} activeOpacity={0.85}>
           <Text style={styles.ctaEmoji}>＋</Text>
           <View>
-            <Text style={styles.ctaTitle}>Plan a new day</Text>
-            <Text style={styles.ctaSub}>Build your perfect LA itinerary</Text>
+            <Text style={styles.ctaTitle}>Plan a new trek</Text>
+            <Text style={styles.ctaSub}>Build your perfect day</Text>
           </View>
         </TouchableOpacity>
 

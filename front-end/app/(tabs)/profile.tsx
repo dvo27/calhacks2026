@@ -1,13 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
-  ScrollView, ActivityIndicator,
+  ScrollView, ActivityIndicator, Modal, TextInput,
+  KeyboardAvoidingView, Platform, Share, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/colors';
 import { supabase } from '@/lib/supabase';
 import RouteMap from '@/components/map/RouteMap';
-import { getMyProfile } from '@/lib/api';
+import { getMyProfile, updateProfile } from '@/lib/api';
+import { useTrekStore } from '@/lib/store';
 
 async function fetchMe(): Promise<ProfileData | null> {
   try {
@@ -62,11 +65,19 @@ function initials(username: string | null, email: string) {
 
 export default function ProfileScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
+  const { setTripId, setPlanStep } = useTrekStore();
 
   const [data, setData] = useState<ProfileData | null>(null);
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>('days');
   const [userEmail, setUserEmail] = useState('');
+
+  // edit profile modal
+  const [showEdit, setShowEdit] = useState(false);
+  const [editUsername, setEditUsername] = useState('');
+  const [saving, setSaving] = useState(false);
+  const inputRef = useRef<TextInput>(null);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: s }) => {
@@ -78,6 +89,52 @@ export default function ProfileScreen() {
     });
   }, []);
 
+  function openEdit() {
+    setEditUsername(data?.profile.username ?? '');
+    setShowEdit(true);
+    setTimeout(() => inputRef.current?.focus(), 100);
+  }
+
+  async function saveUsername() {
+    const trimmed = editUsername.trim();
+    if (!trimmed || trimmed === data?.profile.username) {
+      setShowEdit(false);
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await updateProfile({ username: trimmed });
+      setData((prev) => prev ? { ...prev, profile: { ...prev.profile, username: res.profile.username } } : prev);
+      setShowEdit(false);
+    } catch (err) {
+      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to update username.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleShareProfile() {
+    const username = data?.profile.username ?? userEmail.split('@')[0] ?? 'me';
+    const tripCount = data?.stats.trips ?? 0;
+    const msg = `Add me on Trek!\n📍 @${username} · ${tripCount} trip${tripCount !== 1 ? 's' : ''} posted`;
+    try {
+      await Share.share({ message: msg });
+    } catch {
+      // user cancelled
+    }
+  }
+
+  function openTrip(trip: Trip) {
+    if (trip.is_public) {
+      router.push(`/trip/${trip.id}`);
+    } else {
+      // draft — load into plan step for editing
+      setTripId(trip.id);
+      setPlanStep('plan');
+      router.push('/plan');
+    }
+  }
+
   const displayName = data?.profile.username ?? userEmail.split('@')[0] ?? 'You';
   const handle = data?.profile.username ? `@${data.profile.username}` : userEmail;
   const allDays = [...(data?.trips ?? []), ...(data?.drafts ?? [])];
@@ -87,9 +144,6 @@ export default function ProfileScreen() {
       {/* header */}
       <View style={styles.topBar}>
         <Text style={styles.pageTitle}>Profile</Text>
-        <TouchableOpacity style={styles.iconBtn}>
-          <Text style={styles.iconBtnText}>⚙</Text>
-        </TouchableOpacity>
       </View>
 
       {loading ? (
@@ -109,29 +163,33 @@ export default function ProfileScreen() {
             </View>
           </View>
 
-          <Text style={styles.bio}>planning LA one day at a time ☕ coffee → sunset → repeat</Text>
-
           {/* stats */}
           <View style={styles.statsRow}>
             {[
-              { label: 'days', value: data?.stats.trips ?? 0 },
-              { label: 'collections', value: data?.stats.collections ?? 0 },
-              { label: 'followers', value: data?.stats.followers ?? 0 },
-              { label: 'following', value: data?.stats.following ?? 0 },
+              { label: 'days', value: data?.stats.trips ?? 0, route: null },
+              { label: 'collections', value: data?.stats.collections ?? 0, route: null },
+              { label: 'followers', value: data?.stats.followers ?? 0, route: '/profile/followers?type=followers' },
+              { label: 'following', value: data?.stats.following ?? 0, route: '/profile/followers?type=following' },
             ].map((s) => (
-              <View key={s.label} style={styles.statCell}>
+              <TouchableOpacity
+                key={s.label}
+                style={styles.statCell}
+                disabled={!s.route}
+                activeOpacity={s.route ? 0.7 : 1}
+                onPress={s.route ? () => router.push(s.route as any) : undefined}
+              >
                 <Text style={styles.statValue}>{s.value}</Text>
-                <Text style={styles.statLabel}>{s.label}</Text>
-              </View>
+                <Text style={[styles.statLabel, s.route && styles.statLabelTappable]}>{s.label}</Text>
+              </TouchableOpacity>
             ))}
           </View>
 
           {/* action buttons */}
           <View style={styles.actionRow}>
-            <TouchableOpacity style={[styles.actionBtn, { flex: 1 }]}>
+            <TouchableOpacity style={[styles.actionBtn, { flex: 1 }]} onPress={openEdit}>
               <Text style={styles.actionBtnText}>Edit profile</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={[styles.actionBtn, { flex: 1 }]}>
+            <TouchableOpacity style={[styles.actionBtn, { flex: 1 }]} onPress={handleShareProfile}>
               <Text style={styles.actionBtnText}>Share profile</Text>
             </TouchableOpacity>
           </View>
@@ -155,7 +213,7 @@ export default function ProfileScreen() {
               </View>
             ) : (
               allDays.map((trip) => (
-                <View key={trip.id} style={styles.tripRow}>
+                <TouchableOpacity key={trip.id} style={styles.tripRow} activeOpacity={0.8} onPress={() => openTrip(trip)}>
                   <View style={styles.tripThumb}>
                     <RouteMap points={[]} height={78} />
                   </View>
@@ -166,11 +224,12 @@ export default function ProfileScreen() {
                         trip.total_budget != null && `$${trip.total_budget}`,
                         fmtMin(trip.total_drive_time_minutes ?? null),
                         trip.total_distance_miles != null && `${Math.round(trip.total_distance_miles)}mi`,
-                        trip.is_public ? '🌐 public' : '🔒 private',
+                        trip.is_public ? '🌐 public' : '🔒 draft',
                       ].filter(Boolean).join(' · ')}
                     </Text>
                   </View>
-                </View>
+                  <Text style={styles.chevron}>›</Text>
+                </TouchableOpacity>
               ))
             )
           )}
@@ -194,7 +253,7 @@ export default function ProfileScreen() {
             </View>
           )}
 
-          {/* collections tab */}
+          {/* collections/drafts tab */}
           {tab === 'saved' && (
             data?.collections.length === 0 ? (
               <View style={styles.emptyWrap}>
@@ -217,6 +276,46 @@ export default function ProfileScreen() {
           )}
         </ScrollView>
       )}
+
+      {/* Edit profile modal */}
+      <Modal visible={showEdit} transparent animationType="slide" onRequestClose={() => setShowEdit(false)}>
+        <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+          <TouchableOpacity style={styles.backdrop} activeOpacity={1} onPress={() => setShowEdit(false)} />
+          <View style={[styles.sheet, { paddingBottom: insets.bottom + 8 }]}>
+            <View style={styles.sheetHandle} />
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Edit profile</Text>
+              <TouchableOpacity onPress={() => setShowEdit(false)}>
+                <Text style={styles.sheetClose}>✕</Text>
+              </TouchableOpacity>
+            </View>
+            <View style={styles.sheetBody}>
+              <Text style={styles.fieldLabel}>Username</Text>
+              <TextInput
+                ref={inputRef}
+                style={styles.fieldInput}
+                value={editUsername}
+                onChangeText={setEditUsername}
+                placeholder="your_username"
+                placeholderTextColor={Colors.soft}
+                autoCapitalize="none"
+                autoCorrect={false}
+                maxLength={32}
+                returnKeyType="done"
+                onSubmitEditing={saveUsername}
+              />
+              <TouchableOpacity
+                style={[styles.saveBtn, saving && styles.saveBtnDisabled]}
+                onPress={saveUsername}
+                disabled={saving}
+                activeOpacity={0.85}
+              >
+                <Text style={styles.saveBtnText}>{saving ? 'Saving…' : 'Save'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </KeyboardAvoidingView>
+      </Modal>
     </View>
   );
 }
@@ -230,15 +329,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18, paddingTop: 6, paddingBottom: 10,
   },
   pageTitle: { fontWeight: '700', fontSize: 28, color: Colors.ink, letterSpacing: -0.5 },
-  iconBtn: {
-    width: 38, height: 38, borderRadius: 12, borderWidth: 1, borderColor: Colors.line,
-    backgroundColor: Colors.paper, alignItems: 'center', justifyContent: 'center',
-  },
-  iconBtnText: { fontSize: 18 },
 
   scroll: { paddingHorizontal: 18, paddingBottom: 32 },
 
-  identRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 10 },
+  identRow: { flexDirection: 'row', alignItems: 'center', gap: 14, marginBottom: 14 },
   avatar: {
     width: 64, height: 64, borderRadius: 20,
     backgroundColor: Colors.coral, alignItems: 'center', justifyContent: 'center',
@@ -246,8 +340,6 @@ const styles = StyleSheet.create({
   avatarText: { color: '#fff', fontWeight: '700', fontSize: 26 },
   displayName: { fontWeight: '700', fontSize: 20, color: Colors.ink, letterSpacing: -0.3 },
   handle: { fontSize: 13, color: Colors.soft, marginTop: 2 },
-
-  bio: { fontSize: 14, color: Colors.ink2, lineHeight: 20, marginBottom: 14 },
 
   statsRow: {
     flexDirection: 'row', backgroundColor: Colors.paper,
@@ -260,6 +352,7 @@ const styles = StyleSheet.create({
   },
   statValue: { fontWeight: '700', fontSize: 18, color: Colors.ink },
   statLabel: { fontSize: 11, color: Colors.soft, marginTop: 2 },
+  statLabelTappable: { color: Colors.coral },
 
   actionRow: { flexDirection: 'row', gap: 9, marginBottom: 4 },
   actionBtn: {
@@ -287,6 +380,7 @@ const styles = StyleSheet.create({
   tripThumb: { width: 78, height: 78, borderRadius: 12, overflow: 'hidden', flexShrink: 0 },
   tripName: { fontWeight: '700', fontSize: 16, color: Colors.ink },
   tripMeta: { fontSize: 12, color: Colors.soft, marginTop: 4 },
+  chevron: { fontSize: 22, color: Colors.soft },
 
   wtgRow: {
     flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -315,4 +409,37 @@ const styles = StyleSheet.create({
   emptyWrap: { alignItems: 'center', paddingTop: 36 },
   emptyEmoji: { fontSize: 40 },
   emptyText: { color: Colors.soft, marginTop: 8, fontSize: 13 },
+
+  // edit modal
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  sheet: {
+    backgroundColor: Colors.paper,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+  },
+  sheetHandle: { width: 40, height: 5, borderRadius: 3, backgroundColor: Colors.line, alignSelf: 'center', marginTop: 10, marginBottom: 4 },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingVertical: 12 },
+  sheetTitle: { fontWeight: '700', fontSize: 18, color: Colors.ink },
+  sheetClose: { fontSize: 16, color: Colors.soft, padding: 4 },
+  sheetBody: { paddingHorizontal: 18, paddingTop: 4, paddingBottom: 8 },
+  fieldLabel: { fontSize: 12, fontWeight: '700', color: Colors.soft, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 },
+  fieldInput: {
+    backgroundColor: Colors.bg,
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 16,
+    color: Colors.ink,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: Colors.line,
+  },
+  saveBtn: {
+    backgroundColor: Colors.coral,
+    borderRadius: 14,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  saveBtnDisabled: { opacity: 0.6 },
+  saveBtnText: { color: '#fff', fontWeight: '700', fontSize: 15 },
 });
