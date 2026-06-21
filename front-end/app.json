@@ -25,7 +25,13 @@
     },
     "plugins": [
       "expo-router",
-      "expo-font"
+      "expo-font",
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "This app would like to know your location so it can search nearby places and center the map."
+        }
+      ]
     ]
   }
 }
