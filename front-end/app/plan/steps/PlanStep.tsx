@@ -9,6 +9,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
@@ -68,6 +69,25 @@ function formatTime(minutes: number): string {
   return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
 }
 
+function splitTime(minutes: number) {
+  const total = ((minutes % 1440) + 1440) % 1440;
+  const h24 = Math.floor(total / 60);
+  const minute = total % 60;
+  return {
+    hour12: h24 % 12 === 0 ? 12 : h24 % 12,
+    minute,
+    period: h24 >= 12 ? ('PM' as const) : ('AM' as const),
+  };
+}
+
+function combineTime(hour12: number, minute: number, period: 'AM' | 'PM') {
+  const normalizedHour = ((hour12 - 1) % 12) + 1;
+  const h24 = period === 'PM'
+    ? (normalizedHour === 12 ? 12 : normalizedHour + 12)
+    : (normalizedHour === 12 ? 0 : normalizedHour);
+  return h24 * 60 + minute;
+}
+
 export default function PlanStep() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -88,6 +108,13 @@ export default function PlanStep() {
   const [uploadingId, setUploadingId] = useState<number | null>(null);
   const [busy, setBusy] = useState<null | 'save' | 'share'>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [timePickerOpen, setTimePickerOpen] = useState(false);
+  const [selectedPlaceId, setSelectedPlaceId] = useState<number | null>(null);
+  const [timeDraft, setTimeDraft] = useState<{ hour12: number; minute: number; period: 'AM' | 'PM' }>({
+    hour12: 10,
+    minute: 0,
+    period: 'AM',
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -178,11 +205,23 @@ export default function PlanStep() {
     setRatings((prev) => ({ ...prev, [id]: prev[id] === value ? 0 : value }));
   }
 
-  function shiftTime(id: number, deltaMinutes: number) {
-    setTimes((prev) => {
-      const next = Math.max(0, Math.min(1439, (prev[id] ?? DEFAULT_START_MINUTES) + deltaMinutes));
-      return { ...prev, [id]: next };
-    });
+  function openTimePicker(id: number) {
+    const current = times[id] ?? DEFAULT_START_MINUTES;
+    setSelectedPlaceId(id);
+    setTimeDraft(splitTime(current));
+    setTimePickerOpen(true);
+  }
+
+  function closeTimePicker() {
+    setTimePickerOpen(false);
+    setSelectedPlaceId(null);
+  }
+
+  function saveTimePicker() {
+    if (selectedPlaceId === null) return;
+    const next = combineTime(timeDraft.hour12, timeDraft.minute, timeDraft.period);
+    setTimes((prev) => ({ ...prev, [selectedPlaceId]: next }));
+    closeTimePicker();
   }
 
   async function handleAddPhoto(activityId: number) {
@@ -252,23 +291,20 @@ export default function PlanStep() {
 
       if (mode === 'share') {
         await publishTrip(tripId);
+        startNewDay();
+        router.replace('/feed');
+        return;
       }
 
-      Alert.alert(
-        mode === 'share' ? 'Shared to feed' : 'Trip saved',
-        mode === 'share'
-          ? 'Your day is now public on the feed.'
-          : 'Your day is saved. You can keep editing it anytime.',
-        [
-          {
-            text: 'Done',
-            onPress: () => {
-              startNewDay();
-              router.replace('/feed');
-            },
+      Alert.alert('Trip saved', 'Your day is saved. You can keep editing it anytime.', [
+        {
+          text: 'Done',
+          onPress: () => {
+            startNewDay();
+            router.replace('/feed');
           },
-        ]
-      );
+        },
+      ]);
     } catch (err) {
       Alert.alert('Something went wrong', err instanceof Error ? err.message : 'Please try again.');
     } finally {
@@ -380,15 +416,10 @@ export default function PlanStep() {
 
             <View style={styles.controlRow}>
               <Text style={styles.controlLabel}>When</Text>
-              <View style={styles.stepper}>
-                <TouchableOpacity style={styles.stepBtn} onPress={() => shiftTime(place.id, -15)} hitSlop={6}>
-                  <Text style={styles.stepBtnText}>−</Text>
-                </TouchableOpacity>
+              <TouchableOpacity style={styles.timeButton} onPress={() => openTimePicker(place.id)} activeOpacity={0.85}>
                 <Text style={styles.timeText}>{formatTime(times[place.id] ?? DEFAULT_START_MINUTES)}</Text>
-                <TouchableOpacity style={styles.stepBtn} onPress={() => shiftTime(place.id, 15)} hitSlop={6}>
-                  <Text style={styles.stepBtnText}>＋</Text>
-                </TouchableOpacity>
-              </View>
+                <Text style={styles.timeButtonSub}>Change time</Text>
+              </TouchableOpacity>
             </View>
 
             <TextInput
@@ -438,6 +469,74 @@ export default function PlanStep() {
           <Text style={styles.shareBtnText}>{busy === 'share' ? 'Sharing…' : 'Share to feed'}</Text>
         </TouchableOpacity>
       </View>
+
+      <Modal visible={timePickerOpen} transparent animationType="fade" onRequestClose={closeTimePicker}>
+        <View style={styles.timeModalBackdrop}>
+          <View style={styles.timeModalSheet}>
+            <View style={styles.timeModalGrab} />
+            <Text style={styles.timeModalTitle}>Choose time</Text>
+            <Text style={styles.timeModalSub}>
+              {selectedPlaceId !== null ? places.find((place) => place.id === selectedPlaceId)?.title ?? 'This stop' : 'This stop'}
+            </Text>
+
+            <View style={styles.timeSummary}>
+              <Text style={styles.timeSummaryValue}>
+                {`${timeDraft.hour12}:${String(timeDraft.minute).padStart(2, '0')} ${timeDraft.period}`}
+              </Text>
+            </View>
+
+            <Text style={styles.timePickerLabel}>Hour</Text>
+            <View style={styles.chipGrid}>
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].map((hour) => (
+                <TouchableOpacity
+                  key={hour}
+                  style={[styles.timeChip, timeDraft.hour12 === hour && styles.timeChipOn]}
+                  onPress={() => setTimeDraft((prev) => ({ ...prev, hour12: hour }))}
+                >
+                  <Text style={[styles.timeChipText, timeDraft.hour12 === hour && styles.timeChipTextOn]}>{hour}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.timePickerLabel}>Minutes</Text>
+            <View style={styles.chipGrid}>
+              {[0, 15, 30, 45].map((minute) => (
+                <TouchableOpacity
+                  key={minute}
+                  style={[styles.timeChip, timeDraft.minute === minute && styles.timeChipOn]}
+                  onPress={() => setTimeDraft((prev) => ({ ...prev, minute }))}
+                >
+                  <Text style={[styles.timeChipText, timeDraft.minute === minute && styles.timeChipTextOn]}>
+                    {String(minute).padStart(2, '0')}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.timePickerLabel}>AM / PM</Text>
+            <View style={styles.periodRow}>
+              {(['AM', 'PM'] as const).map((period) => (
+                <TouchableOpacity
+                  key={period}
+                  style={[styles.periodChip, timeDraft.period === period && styles.periodChipOn]}
+                  onPress={() => setTimeDraft((prev) => ({ ...prev, period }))}
+                >
+                  <Text style={[styles.periodText, timeDraft.period === period && styles.periodTextOn]}>{period}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <View style={styles.timeModalActions}>
+              <TouchableOpacity style={styles.timeModalCancel} onPress={closeTimePicker}>
+                <Text style={styles.timeModalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.timeModalSave} onPress={saveTimePicker}>
+                <Text style={styles.timeModalSaveText}>Set time</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -507,10 +606,81 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   addPhotoText: { color: Colors.soft, fontWeight: '700', fontSize: 12, textAlign: 'center' },
-  stepper: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: Colors.bg, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 4 },
-  stepBtn: { width: 30, height: 30, borderRadius: 10, backgroundColor: Colors.paper, alignItems: 'center', justifyContent: 'center' },
-  stepBtnText: { fontSize: 18, color: Colors.ink, fontWeight: '700' },
-  timeText: { fontSize: 14, fontWeight: '700', color: Colors.ink, minWidth: 78, textAlign: 'center' },
+  timeButton: {
+    minWidth: 124,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: Colors.bg,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.line,
+  },
+  timeButtonSub: { fontSize: 11, color: Colors.soft, marginTop: 2, fontWeight: '600' },
+  timeText: { fontSize: 15, fontWeight: '800', color: Colors.ink, textAlign: 'center' },
+
+  timeModalBackdrop: { flex: 1, backgroundColor: 'rgba(15,16,22,0.45)', justifyContent: 'flex-end' },
+  timeModalSheet: {
+    backgroundColor: Colors.paper,
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    paddingHorizontal: 18,
+    paddingTop: 8,
+    paddingBottom: 18,
+  },
+  timeModalGrab: { width: 42, height: 5, borderRadius: 5, backgroundColor: '#DADBD4', alignSelf: 'center', marginBottom: 14 },
+  timeModalTitle: { fontWeight: '700', fontSize: 20, color: Colors.ink },
+  timeModalSub: { fontSize: 12, color: Colors.soft, marginTop: 2, marginBottom: 12 },
+  timeSummary: {
+    backgroundColor: Colors.bg,
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: Colors.line,
+  },
+  timeSummaryValue: { fontWeight: '800', fontSize: 28, color: Colors.ink },
+  timePickerLabel: { fontSize: 12, fontWeight: '700', color: Colors.soft, marginTop: 10, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.7 },
+  chipGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  timeChip: {
+    minWidth: 52,
+    paddingVertical: 11,
+    borderRadius: 14,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    alignItems: 'center',
+  },
+  timeChipOn: { backgroundColor: Colors.ink, borderColor: Colors.ink },
+  timeChipText: { fontWeight: '700', color: Colors.ink, fontSize: 14 },
+  timeChipTextOn: { color: '#fff' },
+  periodRow: { flexDirection: 'row', gap: 10 },
+  periodChip: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 14,
+    backgroundColor: Colors.bg,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    alignItems: 'center',
+  },
+  periodChipOn: { backgroundColor: Colors.coral, borderColor: Colors.coral },
+  periodText: { fontWeight: '700', color: Colors.ink, fontSize: 14 },
+  periodTextOn: { color: '#fff' },
+  timeModalActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  timeModalCancel: {
+    flex: 1,
+    paddingVertical: 14,
+    borderRadius: 14,
+    backgroundColor: Colors.bg,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.line,
+  },
+  timeModalCancelText: { fontWeight: '700', color: Colors.ink },
+  timeModalSave: { flex: 1, paddingVertical: 14, borderRadius: 14, backgroundColor: Colors.coral, alignItems: 'center' },
+  timeModalSaveText: { color: '#fff', fontWeight: '700' },
 
   actionBar: {
     flexDirection: 'row', gap: 10, paddingHorizontal: 18, paddingTop: 12,

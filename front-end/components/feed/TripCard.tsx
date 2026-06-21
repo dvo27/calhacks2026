@@ -1,4 +1,4 @@
-import { View, Text, Image, TouchableOpacity, StyleSheet } from 'react-native';
+import { View, Text, Image, TouchableOpacity, StyleSheet, ScrollView, useWindowDimensions, Linking } from 'react-native';
 import { Colors } from '@/constants/colors';
 import type { TripSummary } from '@/lib/api';
 import TripRouteMap, { TripRoutePoint } from '@/components/map/TripRouteMap';
@@ -60,7 +60,32 @@ function parseCoordinates(value: unknown): { latitude: number; longitude: number
   return null;
 }
 
+function buildGoogleMapsUrl(points: TripRoutePoint[]): string | null {
+  if (points.length < 2) return null;
+
+  const origin = `${points[0].latitude},${points[0].longitude}`;
+  const destination = `${points[points.length - 1].latitude},${points[points.length - 1].longitude}`;
+  const waypoints = points
+    .slice(1, -1)
+    .map((point) => `${point.latitude},${point.longitude}`)
+    .join('|');
+
+  const query = [
+    `api=1`,
+    `travelmode=driving`,
+    `origin=${encodeURIComponent(origin)}`,
+    `destination=${encodeURIComponent(destination)}`,
+    `dir_action=navigate`,
+    waypoints ? `waypoints=${encodeURIComponent(waypoints)}` : null,
+  ]
+    .filter(Boolean)
+    .join('&');
+
+  return `https://www.google.com/maps/dir/?${query}`;
+}
+
 export default function TripCard({ trip, onPress, showAuthor, showPrivacy }: TripCardProps) {
+  const { width: screenWidth } = useWindowDimensions();
   const routePoints: TripRoutePoint[] = (trip.route_preview_points ?? []).map((point) => ({
     id: point.id,
     name: point.title,
@@ -84,13 +109,23 @@ export default function TripCard({ trip, onPress, showAuthor, showPrivacy }: Tri
       }, []);
   const stops = trip.activities?.length ?? 0;
   const cover = trip.trip_media?.[0]?.s3_url ?? null;
+  const photos = (trip.trip_media ?? []).filter((media) => media.media_type !== 'video');
   const photoCount = trip.trip_media?.length ?? 0;
   const description = trip.activities?.find((activity) => activity.description?.trim())?.description?.trim() ?? null;
   const author = trip.user?.username ?? 'Someone';
   const initial = author.charAt(0).toUpperCase() || '?';
+  const cardWidth = Math.max(0, screenWidth - 36);
+  const directionsUrl = buildGoogleMapsUrl(fallbackPoints);
+  const mediaSlides = [
+    ...(fallbackPoints.length > 0 ? [{ key: 'route', type: 'route' as const }] : []),
+    ...(cover ? [{ key: `cover-${cover}`, type: 'cover' as const, url: cover }] : []),
+    ...photos
+      .filter((photo) => photo.s3_url !== cover)
+      .map((photo) => ({ key: `photo-${photo.id ?? photo.s3_url}`, type: 'photo' as const, url: photo.s3_url })),
+  ];
 
   return (
-    <TouchableOpacity style={styles.card} onPress={onPress} activeOpacity={0.9}>
+    <View style={styles.card}>
       {showAuthor ? (
         <View style={styles.authorRow}>
           <View style={styles.avatar}>
@@ -100,17 +135,34 @@ export default function TripCard({ trip, onPress, showAuthor, showPrivacy }: Tri
         </View>
       ) : null}
 
-      {fallbackPoints.length > 0 ? (
-        <TripRouteMap points={fallbackPoints} style={styles.cover} />
-      ) : cover ? (
-        <Image source={{ uri: cover }} style={styles.cover} />
-      ) : (
-        <View style={[styles.cover, styles.coverEmpty]}>
-          <Text style={styles.coverEmptyText}>🗺️</Text>
-        </View>
-      )}
+      <ScrollView
+        horizontal
+        pagingEnabled
+        showsHorizontalScrollIndicator={false}
+        nestedScrollEnabled
+        directionalLockEnabled
+        style={styles.mediaStrip}
+        contentContainerStyle={styles.mediaStripContent}
+      >
+        {mediaSlides.map((slide) => (
+          <View key={slide.key} style={[styles.cover, { width: cardWidth }]}>
+            {slide.type === 'route' ? (
+              <TripRouteMap points={fallbackPoints} style={styles.cover} />
+            ) : slide.type === 'cover' ? (
+              <Image source={{ uri: slide.url }} style={styles.cover} />
+            ) : (
+              <Image source={{ uri: slide.url }} style={styles.cover} />
+            )}
+          </View>
+        ))}
+        {mediaSlides.length === 0 ? (
+          <View style={[styles.cover, styles.coverEmpty, { width: cardWidth }]}>
+            <Text style={styles.coverEmptyText}>🗺️</Text>
+          </View>
+        ) : null}
+      </ScrollView>
 
-      <View style={styles.body}>
+      <TouchableOpacity style={styles.body} onPress={onPress} activeOpacity={0.9}>
         <View style={styles.titleRow}>
           <Text style={styles.title} numberOfLines={1}>{trip.title}</Text>
           {showPrivacy ? (
@@ -123,11 +175,27 @@ export default function TripCard({ trip, onPress, showAuthor, showPrivacy }: Tri
         </View>
 
         <View style={styles.metaRow}>
-          <Meta value={`${stops}`} label="stops" />
-          <Meta value={`${photoCount}`} label="photos" />
-          <Meta value={formatDrive(trip.total_drive_time_minutes)} label="drive" />
-          <Meta value={`$${toNum(trip.total_budget).toFixed(0)}`} label="budget" />
-          <Meta value={`${toNum(trip.total_distance_miles).toFixed(0)} mi`} label="miles" />
+          <View style={styles.metaGroup}>
+            <Meta value={`${stops}`} label="stops" />
+            <Meta value={`${photoCount}`} label="photos" />
+            <Meta value={formatDrive(trip.total_drive_time_minutes)} label="drive" />
+            <Meta value={`$${toNum(trip.total_budget).toFixed(0)}`} label="budget" />
+            <Meta value={`${toNum(trip.total_distance_miles).toFixed(0)} mi`} label="miles" />
+          </View>
+          {directionsUrl ? (
+            <TouchableOpacity
+              style={styles.copyBtn}
+              onPress={async () => {
+                const canOpen = await Linking.canOpenURL(directionsUrl);
+                if (canOpen) {
+                  await Linking.openURL(directionsUrl);
+                }
+              }}
+              activeOpacity={0.85}
+            >
+              <Text style={styles.copyBtnText}>Open in Maps</Text>
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {description ? (
@@ -135,8 +203,8 @@ export default function TripCard({ trip, onPress, showAuthor, showPrivacy }: Tri
             {description}
           </Text>
         ) : null}
-      </View>
-    </TouchableOpacity>
+      </TouchableOpacity>
+    </View>
   );
 }
 
@@ -169,6 +237,8 @@ const styles = StyleSheet.create({
   cover: { width: '100%', height: 160, backgroundColor: Colors.line },
   coverEmpty: { alignItems: 'center', justifyContent: 'center' },
   coverEmptyText: { fontSize: 40 },
+  mediaStrip: { width: '100%' },
+  mediaStripContent: { flexDirection: 'row' },
 
   body: { padding: 14 },
   titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
@@ -180,9 +250,18 @@ const styles = StyleSheet.create({
   badgeTextPublic: { color: Colors.mint },
   badgeTextDraft: { color: Colors.soft },
 
-  metaRow: { flexDirection: 'row', gap: 18, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: Colors.line },
+  metaRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12, marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: Colors.line },
+  metaGroup: { flex: 1, flexDirection: 'row', flexWrap: 'wrap', gap: 18 },
   meta: { flexDirection: 'column' },
   metaValue: { fontWeight: '700', fontSize: 18, color: Colors.ink },
   metaLabel: { fontSize: 10, color: Colors.soft, marginTop: 2 },
+  copyBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 999,
+    backgroundColor: Colors.ink,
+    alignSelf: 'flex-start',
+  },
+  copyBtnText: { color: '#fff', fontWeight: '700', fontSize: 12 },
   description: { marginTop: 12, fontSize: 13, lineHeight: 19, color: Colors.ink2 },
 });
