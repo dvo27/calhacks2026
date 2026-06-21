@@ -70,6 +70,12 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
   return res.json();
 }
 
+// ---- Profile ----
+
+export function getMyProfile() {
+  return apiFetch<any>('/api/profile/me');
+}
+
 // ---- Trips ----
 
 export interface CreateTripResponse {

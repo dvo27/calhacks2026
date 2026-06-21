@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Modal, StyleSheet } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, Modal, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { Colors } from '@/constants/colors';
 
 const CATS = ['food', 'shopping', 'nightlife', 'attractions'];
@@ -43,8 +43,16 @@ export default function DropPinSheet({ visible, coordLabel, onCancel, onConfirm 
   }
 
   return (
-    <Modal visible={visible} transparent animationType="fade" onRequestClose={onCancel}>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onCancel}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
       <View style={styles.backdrop}>
+        <ScrollView
+          contentContainerStyle={{ flexGrow: 1, justifyContent: 'flex-end' }}
+          keyboardShouldPersistTaps="handled"
+        >
         <View style={styles.sheet}>
           <View style={styles.grab} />
           <Text style={styles.title}>Name this spot</Text>
@@ -106,7 +114,9 @@ export default function DropPinSheet({ visible, coordLabel, onCancel, onConfirm 
             </TouchableOpacity>
           </View>
         </View>
+        </ScrollView>
       </View>
+      </KeyboardAvoidingView>
     </Modal>
   );
 }
