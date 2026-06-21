@@ -1,35 +1,80 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
-  FlatList, StyleSheet, KeyboardAvoidingView, Platform,
+  FlatList, StyleSheet, KeyboardAvoidingView, Platform, ActivityIndicator,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Location from 'expo-location';
 import { Colors } from '@/constants/colors';
 import { useTrekStore } from '@/lib/store';
+import { getPlaceSuggestions, type PlaceSuggestion } from '@/lib/api';
 import TagRow from '@/components/discover/TagRow';
 import DiscoverMap from '@/components/map/DiscoverMap';
 import DropPinSheet, { DropPinResult } from '@/components/discover/DropPinSheet';
 import type { StopCat } from '@/lib/types';
 
-const PLACES = [
-  { id: 'p1',  name: 'Erewhon Market',       address: 'Silver Lake · 711 Sunset Blvd',      cat: 'food'        as StopCat, price: '$$$', cost: 55, lat: 34.0778, lng: -118.2754 },
-  { id: 'p2',  name: 'Verve Coffee',          address: 'Melrose · 8410 Melrose Ave',         cat: 'food'        as StopCat, price: '$$',  cost: 18, lat: 34.0837, lng: -118.3522 },
-  { id: 'p3',  name: 'LACMA',                 address: 'Mid-Wilshire · 5905 Wilshire Blvd',  cat: 'attractions' as StopCat, price: '$$',  cost: 25, lat: 34.0639, lng: -118.3593 },
-  { id: 'p4',  name: 'The Grove',             address: 'Fairfax · 189 The Grove Dr',         cat: 'shopping'    as StopCat, price: '$$',  cost: 28, lat: 34.0722, lng: -118.3563 },
-  { id: 'p5',  name: 'Griffith Observatory',  address: 'Los Feliz · 2800 E Observatory Rd',  cat: 'attractions' as StopCat, price: 'Free',cost: 0,  lat: 34.1184, lng: -118.3004 },
-  { id: 'p6',  name: 'Night + Market',        address: 'WeHo · 9043 Sunset Blvd',           cat: 'food'        as StopCat, price: '$$$', cost: 55, lat: 34.0904, lng: -118.3871 },
-  { id: 'p7',  name: 'Salt & Straw',          address: 'Larchmont · 240 N Larchmont Blvd',  cat: 'food'        as StopCat, price: '$$',  cost: 14, lat: 34.0777, lng: -118.3275 },
-  { id: 'p8',  name: 'The Abbey',             address: 'WeHo · 692 N Robertson Blvd',       cat: 'nightlife'   as StopCat, price: '$$',  cost: 28, lat: 34.0840, lng: -118.3827 },
-  { id: 'p9',  name: 'Runyon Canyon',         address: 'Hollywood · 2000 N Fuller Ave',     cat: 'attractions' as StopCat, price: 'Free',cost: 0,  lat: 34.1015, lng: -118.3548 },
-  { id: 'p10', name: 'Melrose Trading Post',  address: 'Fairfax · 7850 Melrose Ave',        cat: 'shopping'    as StopCat, price: '$',   cost: 12, lat: 34.0842, lng: -118.3538 },
-  { id: 'p11', name: 'The Broad',             address: 'DTLA · 221 S Grand Ave',            cat: 'attractions' as StopCat, price: 'Free',cost: 0,  lat: 34.0543, lng: -118.2501 },
-  { id: 'p12', name: 'Sqirl',                 address: 'Silver Lake · 720 N Virgil Ave',    cat: 'food'        as StopCat, price: '$$',  cost: 22, lat: 34.0866, lng: -118.2900 },
-  { id: 'p13', name: 'Employees Only',        address: 'WeHo · 7953 Santa Monica Blvd',    cat: 'nightlife'   as StopCat, price: '$$$', cost: 45, lat: 34.0908, lng: -118.3681 },
-  { id: 'p14', name: 'Paramount Pictures',    address: 'Hollywood · 5515 Melrose Ave',      cat: 'attractions' as StopCat, price: '$$',  cost: 55, lat: 34.0839, lng: -118.3239 },
-  { id: 'p15', name: 'Wax Museum',            address: 'Hollywood · 6767 Hollywood Blvd',   cat: 'attractions' as StopCat, price: '$$',  cost: 30, lat: 34.1020, lng: -118.3408 },
-];
+// Foursquare search terms per category chip
+const CAT_QUERY: Record<string, string> = {
+  food: 'restaurant cafe food',
+  shopping: 'shop store mall shopping',
+  nightlife: 'bar nightlife club lounge',
+  attractions: 'museum park attraction landmark',
+};
+
+function tierToPrice(tier: number | null): string {
+  if (tier === 1) return '$';
+  if (tier === 2) return '$$';
+  if (tier === 3) return '$$$';
+  if (tier === 4) return '$$$$';
+  return 'Free';
+}
+
+function tierToCost(tier: number | null): number {
+  if (tier === 1) return 12;
+  if (tier === 2) return 25;
+  if (tier === 3) return 50;
+  if (tier === 4) return 80;
+  return 0;
+}
+
+function matchesPrice(tier: number | null, filter: string): boolean {
+  if (filter === 'all') return true;
+  return tierToPrice(tier) === filter;
+}
+
+function toStopCat(cat: string): StopCat {
+  if (cat.includes('food') || cat.includes('restaurant') || cat.includes('cafe') || cat.includes('bar')) return 'food';
+  if (cat.includes('shop') || cat.includes('store') || cat.includes('mall')) return 'shopping';
+  if (cat.includes('night') || cat.includes('club') || cat.includes('lounge')) return 'nightlife';
+  return 'attractions';
+}
+
+type PlaceRow = {
+  id: string;
+  name: string;
+  address: string;
+  cat: StopCat;
+  price: string;
+  cost: number;
+  lat: number;
+  lng: number;
+  priceTier: number | null;
+};
+
+function suggestionToRow(p: PlaceSuggestion): PlaceRow {
+  return {
+    id: `${p.osmType}-${p.osmId}`,
+    name: p.name,
+    address: p.displayAddress ?? `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`,
+    cat: toStopCat(p.category),
+    price: tierToPrice(p.priceTier),
+    cost: tierToCost(p.priceTier),
+    lat: p.lat,
+    lng: p.lng,
+    priceTier: p.priceTier,
+  };
+}
 
 const EMO: Record<StopCat, string> = {
   food: '🍽', shopping: '🛍', nightlife: '🎸', attractions: '🗺',
@@ -43,6 +88,16 @@ let _cnt = 0;
 function uid() { return `pin-${Date.now()}-${++_cnt}`; }
 
 const DEFAULT_REGION = { latitude: 34.0522, longitude: -118.2437 };
+
+function buildSearchQuery(catFilter: string, textQuery: string): string {
+  const catTerm = catFilter !== 'all' ? (CAT_QUERY[catFilter] ?? catFilter) : '';
+  const q = textQuery.trim();
+  // combine text query with category term so "thai" + food → "thai restaurant cafe food"
+  if (q && catTerm) return `${q} ${catTerm}`;
+  if (q) return q;
+  if (catTerm) return catTerm;
+  return 'things to do';
+}
 
 export default function LocationStep() {
   const insets = useSafeAreaInsets();
@@ -59,6 +114,10 @@ export default function LocationStep() {
   const [dropVisible, setDropVisible] = useState(false);
   const [mapRegion, setMapRegion] = useState(DEFAULT_REGION);
   const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [apiResults, setApiResults] = useState<PlaceRow[]>([]);
+  const [loadingPlaces, setLoadingPlaces] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -71,17 +130,44 @@ export default function LocationStep() {
     })();
   }, []);
 
+  const fetchPlaces = useCallback((catF: string, textQ: string, location: { latitude: number; longitude: number } | null) => {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setLoadingPlaces(true);
+    setApiResults([]);
+    const searchQuery = buildSearchQuery(catF, textQ);
+    getPlaceSuggestions('', searchQuery, location ?? undefined, 5000, 20, ctrl.signal)
+      .then((res) => {
+        if (ctrl.signal.aborted) return;
+        setApiResults(res.places.map(suggestionToRow));
+      })
+      .catch(() => {})
+      .finally(() => { if (!ctrl.signal.aborted) setLoadingPlaces(false); });
+  }, []);
+
+  // Fetch when category changes immediately
+  useEffect(() => {
+    fetchPlaces(catFilter, query, currentLocation);
+    return () => { abortRef.current?.abort(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catFilter, currentLocation]);
+
+  // Fetch on text change with 400ms debounce
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      fetchPlaces(catFilter, query, currentLocation);
+    }, 400);
+    return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query]);
+
   const addedIds = new Set(stops.map((s) => s.id));
 
-  const results = PLACES.filter((p) => {
-    const q = query.toLowerCase();
-    const matchQ = !q || p.name.toLowerCase().includes(q) || p.address.toLowerCase().includes(q) || p.cat.includes(q);
-    const matchCat = catFilter === 'all' || p.cat === catFilter;
-    const matchPrice = priceFilter === 'all' || p.price === priceFilter;
-    return matchQ && matchCat && matchPrice;
-  });
+  const results = apiResults.filter((p) => matchesPrice(p.priceTier, priceFilter));
 
-  function handleAdd(p: typeof PLACES[0]) {
+  function handleAdd(p: PlaceRow) {
     if (addedIds.has(p.id)) return;
     addStop({
       id: p.id,
@@ -176,41 +262,45 @@ export default function LocationStep() {
         </View>
 
         {/* results */}
-        <FlatList
-          data={results.slice(0, 8)}
-          keyExtractor={(item) => item.id}
-          keyboardShouldPersistTaps="handled"
-          style={styles.list}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={
-            <View style={styles.emptyWrap}>
-              <Text style={styles.emptyText}>No places match. Try another search or long-press map to drop a pin.</Text>
-            </View>
-          }
-          renderItem={({ item }) => {
-            const added = addedIds.has(item.id);
-            return (
-              <View style={styles.resultRow}>
-                <View style={[styles.placeIcon, { backgroundColor: CAT_BG[item.cat] }]}>
-                  <Text style={styles.placeEmoji}>{EMO[item.cat]}</Text>
-                </View>
-                <View style={{ flex: 1, minWidth: 0 }}>
-                  <Text style={styles.placeName} numberOfLines={1}>{item.name}</Text>
-                  <Text style={styles.placeMeta} numberOfLines={1}>{item.address} · {item.price}</Text>
-                </View>
-                <TouchableOpacity
-                  style={[styles.addBtn, added && styles.addBtnDone]}
-                  onPress={() => handleAdd(item)}
-                  disabled={added}
-                >
-                  <Text style={[styles.addBtnText, added && styles.addBtnDoneText]}>
-                    {added ? '✓' : 'Add'}
-                  </Text>
-                </TouchableOpacity>
+        {loadingPlaces ? (
+          <ActivityIndicator color={Colors.coral} style={{ marginTop: 16 }} />
+        ) : (
+          <FlatList
+            data={results.slice(0, 8)}
+            keyExtractor={(item) => item.id}
+            keyboardShouldPersistTaps="handled"
+            style={styles.list}
+            showsVerticalScrollIndicator={false}
+            ListEmptyComponent={
+              <View style={styles.emptyWrap}>
+                <Text style={styles.emptyText}>No places match. Try another search or long-press map to drop a pin.</Text>
               </View>
-            );
-          }}
-        />
+            }
+            renderItem={({ item }) => {
+              const added = addedIds.has(item.id);
+              return (
+                <View style={styles.resultRow}>
+                  <View style={[styles.placeIcon, { backgroundColor: CAT_BG[item.cat] }]}>
+                    <Text style={styles.placeEmoji}>{EMO[item.cat]}</Text>
+                  </View>
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <Text style={styles.placeName} numberOfLines={1}>{item.name}</Text>
+                    <Text style={styles.placeMeta} numberOfLines={1}>{item.address} · {item.price}</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={[styles.addBtn, added && styles.addBtnDone]}
+                    onPress={() => handleAdd(item)}
+                    disabled={added}
+                  >
+                    <Text style={[styles.addBtnText, added && styles.addBtnDoneText]}>
+                      {added ? '✓' : 'Add'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            }}
+          />
+        )}
 
         {/* bottom tray */}
         <View style={[styles.tray, { paddingBottom: insets.bottom + 10 }]}>

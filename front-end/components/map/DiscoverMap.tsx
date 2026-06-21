@@ -21,7 +21,7 @@ function SnapshotMarker({ redrawKey, children, ...markerProps }: SnapshotMarkerP
 
   useEffect(() => {
     setTracks(true);
-    const timer = setTimeout(() => setTracks(false), 1000);
+    const timer = setTimeout(() => setTracks(false), 1500);
     return () => clearTimeout(timer);
   }, [redrawKey]);
 
@@ -184,13 +184,15 @@ export default function DiscoverMap({
         }}
         onLongPress={handleLongPress}
       >
-        {stops.length > 1 && (
-          <Polyline
-            coordinates={stops.map((s) => ({ latitude: s.lat, longitude: s.lng }))}
-            strokeColor={Colors.ink}
-            strokeWidth={3}
-          />
-        )}
+        <Polyline
+          coordinates={
+            stops.length >= 2
+              ? stops.map((s) => ({ latitude: s.lat, longitude: s.lng }))
+              : [{ latitude: -89.9, longitude: 0 }, { latitude: -89.9, longitude: 0.001 }]
+          }
+          strokeColor={Colors.ink}
+          strokeWidth={stops.length >= 2 ? 3 : 0}
+        />
 
         {/* unconfirmed search results — tap to add to itinerary. A candidate
             already added as a stop is hidden here; its numbered pin stands in. */}
