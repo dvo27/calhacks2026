@@ -138,7 +138,7 @@ export default function ProfileScreen() {
 
           {/* tabs */}
           <View style={styles.tabs}>
-            {([['days', 'Days'], ['wtg', 'Want to go'], ['saved', 'Collections']] as [Tab, string][]).map(([key, label]) => (
+            {([['days', 'Trips'], ['wtg', 'Places'], ['saved', 'Drafts']] as [Tab, string][]).map(([key, label]) => (
               <TouchableOpacity key={key} style={styles.tab} onPress={() => setTab(key)}>
                 <Text style={[styles.tabText, tab === key && styles.tabTextOn]}>{label}</Text>
                 {tab === key && <View style={styles.tabBar} />}
