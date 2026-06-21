@@ -11,6 +11,13 @@ const SEARCH_RADIUS_METERS = 7200;
 const SEARCH_LIMIT = 24;
 const REVEAL_RADIUSES = [900, 1800, 3600, 7200];
 
+const CAT_QUERY: Record<string, string> = {
+  food: 'restaurant cafe food',
+  shopping: 'shop store mall shopping',
+  nightlife: 'bar nightlife club lounge',
+  attractions: 'museum park attraction landmark',
+};
+
 export interface PlaceResult {
   placeId: string;
   name: string;
@@ -22,6 +29,7 @@ export interface PlaceResult {
 
 interface SearchPlaceInputProps {
   locationQuery: string;
+  categoryFilter?: string;
   onResults: (places: PlaceSuggestion[]) => void;
   onDeviceLocationResolved?: (origin: { latitude: number; longitude: number }) => void;
   onSearchOriginResolved?: (origin: { displayName: string; lat: number; lng: number }) => void;
@@ -44,6 +52,7 @@ async function readRecordedAudioBase64(uri: string) {
 
 export default function SearchPlaceInput({
   locationQuery,
+  categoryFilter = 'all',
   onResults,
   onDeviceLocationResolved,
   onSearchOriginResolved,
@@ -62,11 +71,23 @@ export default function SearchPlaceInput({
   const resolveLocationReadyRef = useRef<(() => void) | null>(null);
   const onDeviceLocationResolvedRef = useRef(onDeviceLocationResolved);
   const onSearchOriginResolvedRef = useRef(onSearchOriginResolved);
+  const categoryFilterRef = useRef(categoryFilter);
+  const categoryMountedRef = useRef(false);
 
   useEffect(() => {
     onDeviceLocationResolvedRef.current = onDeviceLocationResolved;
     onSearchOriginResolvedRef.current = onSearchOriginResolved;
   }, [onDeviceLocationResolved, onSearchOriginResolved]);
+
+  useEffect(() => {
+    categoryFilterRef.current = categoryFilter;
+    if (!categoryMountedRef.current) {
+      categoryMountedRef.current = true;
+      return;
+    }
+    runSearch(query);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryFilter]);
 
   useEffect(() => {
     let cancelled = false;
@@ -177,7 +198,9 @@ export default function SearchPlaceInput({
       }
 
       const originQuery = locationQuery.trim() || DEFAULT_LOCATION_QUERY;
-      const searchQuery = text.trim();
+      const catTerm = CAT_QUERY[categoryFilterRef.current] ?? '';
+      const textTerm = text.trim();
+      const searchQuery = [textTerm, catTerm].filter(Boolean).join(' ') || 'things to do';
       const originCoords = originCoordsRef.current ?? undefined;
 
       onResults([]);

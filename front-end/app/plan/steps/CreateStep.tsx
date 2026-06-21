@@ -169,6 +169,7 @@ export default function CreateStep() {
 
       <SearchPlaceInput
         locationQuery={startLocation || exploreArea}
+        categoryFilter={categoryFilter}
         onResults={handleResults}
         onDeviceLocationResolved={(origin) => setCurrentLocation(origin)}
         onSearchOriginResolved={(origin) => setFocusPoint({ latitude: origin.lat, longitude: origin.lng })}
