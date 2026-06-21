@@ -21,10 +21,18 @@ export async function getRedisClient() {
     redisClient = new RedisClient(getRedisUrl(), {
       lazyConnect: true,
       maxRetriesPerRequest: 1,
+      // Fail fast instead of hanging requests when Redis is unreachable/slow.
+      connectTimeout: 2000,
+      commandTimeout: 2000,
+      enableOfflineQueue: false, // don't queue commands while disconnected — fail immediately
+      retryStrategy: () => null, // stop reconnect storms; cache is optional
     });
 
     redisClient.on('error', (error: Error) => {
       console.error('Redis cache client error:', error.message);
+      // Latch off so subsequent cache calls short-circuit to null instead of
+      // each paying the full command timeout. Caching is best-effort.
+      redisUnavailable = true;
     });
   }
 
