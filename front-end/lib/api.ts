@@ -93,10 +93,12 @@ export function getPlaceSuggestions(
   searchQuery = '',
   originCoords?: { latitude: number; longitude: number },
   radiusMeters = 3000,
-  limit = 20
+  limit = 20,
+  signal?: AbortSignal
 ) {
   return apiFetch<PlaceSuggestionsResponse>('/api/trips/place-suggestions', {
     method: 'POST',
+    signal,
     body: JSON.stringify({
       locationQuery,
       searchQuery,
