@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import MapView, { Marker, Polyline, LongPressEvent } from 'react-native-maps';
 import { Colors } from '@/constants/colors';
@@ -21,6 +21,8 @@ interface DiscoverMapProps {
   stops: MapStop[];
   candidates?: MapCandidate[];
   initialRegion: { latitude: number; longitude: number };
+  currentLocation?: { latitude: number; longitude: number } | null;
+  focusPoint?: { latitude: number; longitude: number } | null;
   onLongPress: (coord: { latitude: number; longitude: number }) => void;
   onCandidatePress?: (candidate: MapCandidate) => void;
 }
@@ -29,20 +31,67 @@ export default function DiscoverMap({
   stops,
   candidates = [],
   initialRegion,
+  currentLocation,
+  focusPoint,
   onLongPress,
   onCandidatePress,
 }: DiscoverMapProps) {
   const mapRef = useRef<MapView>(null);
+  const [mapReady, setMapReady] = useState(false);
 
   function handleLongPress(e: LongPressEvent) {
     onLongPress(e.nativeEvent.coordinate);
   }
+
+  useEffect(() => {
+    if (!mapReady) return;
+
+    const markerCoordinates = [
+      ...(currentLocation ? [{ latitude: currentLocation.latitude, longitude: currentLocation.longitude }] : []),
+      ...stops.map((stop) => ({ latitude: stop.lat, longitude: stop.lng })),
+      ...candidates.map((candidate) => ({ latitude: candidate.lat, longitude: candidate.lng })),
+    ];
+
+    if (markerCoordinates.length === 1) {
+      mapRef.current?.animateToRegion(
+        {
+          latitude: markerCoordinates[0].latitude,
+          longitude: markerCoordinates[0].longitude,
+          latitudeDelta: 0.05,
+          longitudeDelta: 0.05,
+        },
+        300
+      );
+      return;
+    }
+
+    if (markerCoordinates.length > 1) {
+      mapRef.current?.fitToCoordinates(markerCoordinates, {
+        edgePadding: { top: 110, right: 70, bottom: 260, left: 70 },
+        animated: true,
+      });
+      return;
+    }
+
+    if (focusPoint) {
+      mapRef.current?.animateToRegion(
+        {
+          latitude: focusPoint.latitude,
+          longitude: focusPoint.longitude,
+          latitudeDelta: 0.08,
+          longitudeDelta: 0.08,
+        },
+        300
+      );
+    }
+  }, [candidates, currentLocation, focusPoint, mapReady, stops]);
 
   return (
     <View style={styles.wrap}>
       <MapView
         ref={mapRef}
         style={StyleSheet.absoluteFill}
+        onMapReady={() => setMapReady(true)}
         initialRegion={{
           latitude: initialRegion.latitude,
           longitude: initialRegion.longitude,
@@ -81,6 +130,18 @@ export default function DiscoverMap({
             </View>
           </Marker>
         ))}
+
+        {currentLocation && (
+          <Marker
+            key="current-location"
+            coordinate={{ latitude: currentLocation.latitude, longitude: currentLocation.longitude }}
+            title="You are here"
+          >
+            <View style={styles.currentLocationPin}>
+              <View style={styles.currentLocationCore} />
+            </View>
+          </Marker>
+        )}
       </MapView>
 
       <View style={styles.hint}>
@@ -108,6 +169,27 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   pinText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  currentLocationPin: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#EAF3FF',
+    borderWidth: 2,
+    borderColor: '#2F6BFF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#2F6BFF',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 5,
+    elevation: 4,
+  },
+  currentLocationCore: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#2F6BFF',
+  },
   candidatePin: {
     width: 26,
     height: 26,

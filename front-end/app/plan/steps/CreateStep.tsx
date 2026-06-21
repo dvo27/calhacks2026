@@ -25,6 +25,7 @@ export default function CreateStep() {
   const tripId = useTrekStore((s) => s.tripId);
   const setTripId = useTrekStore((s) => s.setTripId);
   const exploreArea = useTrekStore((s) => s.exploreArea);
+  const startLocation = useTrekStore((s) => s.startLocation);
   const stops = useTrekStore((s) => s.stops);
   const addStop = useTrekStore((s) => s.addStop);
   const setPlanStep = useTrekStore((s) => s.setPlanStep);
@@ -34,6 +35,8 @@ export default function CreateStep() {
 
   // search results shown as unconfirmed "+" pins on the map until tapped
   const [candidates, setCandidates] = useState<PlaceSuggestion[]>([]);
+  const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [focusPoint, setFocusPoint] = useState<{ latitude: number; longitude: number } | null>(null);
 
   const [pendingCoord, setPendingCoord] = useState<{ latitude: number; longitude: number } | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -141,7 +144,12 @@ export default function CreateStep() {
         </View>
       </View>
 
-      <SearchPlaceInput areaContext={exploreArea} onResults={handleResults} />
+      <SearchPlaceInput
+        locationQuery={startLocation || exploreArea}
+        onResults={handleResults}
+        onDeviceLocationResolved={(origin) => setCurrentLocation(origin)}
+        onSearchOriginResolved={(origin) => setFocusPoint({ latitude: origin.lat, longitude: origin.lng })}
+      />
 
       <TagRow
         categoryFilter={categoryFilter}
@@ -154,6 +162,8 @@ export default function CreateStep() {
         stops={stops.map((s: any) => ({ id: s.id, name: s.name, lat: s.lat, lng: s.lng }))}
         candidates={candidates.map((c) => ({ id: `${c.osmType}-${c.osmId}`, name: c.name, lat: c.lat, lng: c.lng }))}
         initialRegion={DEFAULT_REGION}
+        currentLocation={currentLocation}
+        focusPoint={focusPoint}
         onLongPress={handleLongPress}
         onCandidatePress={handleCandidatePress}
       />

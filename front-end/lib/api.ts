@@ -1,6 +1,6 @@
 import { supabase } from './supabase'; // your existing Supabase client setup
 
-const API_BASE_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:5001';
+const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:5001').trim().replace(/\/+$/, '');
 
 async function getAuthHeader() {
   const { data } = await supabase.auth.getSession();
@@ -10,14 +10,16 @@ async function getAuthHeader() {
 
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const authHeader = await getAuthHeader();
+  const headers = new Headers(options.headers ?? {});
 
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  headers.set('Content-Type', 'application/json');
+  for (const [key, value] of Object.entries(authHeader)) {
+    headers.set(key, value);
+  }
+
+  const res = await fetch(new URL(path, `${API_BASE_URL}/`).toString(), {
     ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...authHeader,
-      ...(options.headers ?? {}),
-    },
+    headers,
   });
 
   if (!res.ok) {
@@ -64,10 +66,22 @@ export interface PlaceSuggestionsResponse {
   places: PlaceSuggestion[];
 }
 
-export function getPlaceSuggestions(locationQuery: string, radiusMeters = 3000, limit = 20) {
+export function getPlaceSuggestions(
+  locationQuery: string,
+  searchQuery = '',
+  originCoords?: { latitude: number; longitude: number },
+  radiusMeters = 3000,
+  limit = 20
+) {
   return apiFetch<PlaceSuggestionsResponse>('/api/trips/place-suggestions', {
     method: 'POST',
-    body: JSON.stringify({ locationQuery, radiusMeters, limit }),
+    body: JSON.stringify({
+      locationQuery,
+      searchQuery,
+      originCoords,
+      radiusMeters,
+      limit,
+    }),
   });
 }
 
