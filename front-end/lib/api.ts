@@ -50,6 +50,7 @@ export interface PlaceSuggestion {
   name: string;
   category: string;
   subcategory: string | null;
+  priceTier: number | null;
   displayAddress: string | null;
   lat: number;
   lng: number;
