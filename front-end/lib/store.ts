@@ -41,7 +41,7 @@ interface TrekStore {
 }
 
 export const useTrekStore = create<TrekStore>((set) => ({
-  planStep: 'create',
+  planStep: 'location',
   setPlanStep: (step) => set({ planStep: step }),
 
   startLocation: '',
@@ -80,7 +80,7 @@ export const useTrekStore = create<TrekStore>((set) => ({
 
   startNewDay: () =>
     set({
-      planStep: 'create',
+      planStep: 'location',
       startLocation: '',
       exploreArea: '',
       exploreDate: '',

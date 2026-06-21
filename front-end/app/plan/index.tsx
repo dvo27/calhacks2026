@@ -1,14 +1,14 @@
 import { useTrekStore } from '@/lib/store';
-import CreateStep from './steps/CreateStep';
+import LocationStep from './steps/LocationStep';
 import ActivitiesStep from './steps/ActivitiesStep';
-import DiscoverStep from './steps/DiscoverStep';
+import CreateStep from './steps/CreateStep'; // search & drop pins (map screen)
 import PlanStep from './steps/PlanStep';
 
 export default function PlanScreen() {
   const planStep = useTrekStore((s) => s.planStep);
 
-  if (planStep === 'create') return <CreateStep />;
+  if (planStep === 'location') return <LocationStep />;
   if (planStep === 'acts') return <ActivitiesStep />;
-  if (planStep === 'discover') return <DiscoverStep />;
+  if (planStep === 'discover') return <CreateStep />;
   return <PlanStep />;
 }
