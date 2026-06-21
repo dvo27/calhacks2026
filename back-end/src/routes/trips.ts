@@ -6,6 +6,7 @@ import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { ensureTripOwnership, getTripEngagementCounts } from '../services/metrics.js';
 import { getTripTimeline, invalidateTripTimeline } from '../services/timeline.js';
 import { suggestPlacesForLocation } from '../services/places.js';
+import { createTripMediaUploadUrl, isStorageEnabled } from '../services/storage.js';
 
 type TripsRouterOptions = {
   itineraryQueue: Queue;
@@ -274,6 +275,108 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
     } catch (error) {
       console.error('Error fetching place suggestions:', error);
       res.status(500).json({ error: 'Failed to fetch place suggestions.' });
+    }
+  });
+
+  router.post('/:id/media/presign', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const tripId = String(req.params.id ?? '');
+      const userId = req.user?.id;
+      const { fileName, mediaType, contentType } = req.body ?? {};
+
+      if (!isStorageEnabled()) {
+        res.status(503).json({
+          error: 'Storage is not configured. Set S3_* env vars first.',
+        });
+        return;
+      }
+
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized: Invalid context identity.' });
+        return;
+      }
+
+      const ownership = await ensureTripOwnership(tripId, userId);
+      if (!ownership.exists) {
+        res.status(404).json({ error: 'Trip not found.' });
+        return;
+      }
+      if (!ownership.owner) {
+        res.status(403).json({ error: 'Forbidden: You do not own this trip.' });
+        return;
+      }
+
+      if (!fileName || typeof fileName !== 'string') {
+        res.status(400).json({ error: 'fileName is required.' });
+        return;
+      }
+
+      const upload = await createTripMediaUploadUrl({
+        tripId,
+        fileName,
+        mediaType: mediaType === 'video' ? 'video' : 'image',
+        ...(typeof contentType === 'string' ? { contentType } : {}),
+      });
+
+      res.status(200).json({ upload });
+    } catch (error) {
+      console.error('Error creating media upload URL:', error);
+      res.status(500).json({ error: 'Failed to create media upload URL.' });
+    }
+  });
+
+  router.post('/:id/media', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const tripId = String(req.params.id ?? '');
+      const userId = req.user?.id;
+      const { s3Url, mediaType, caption, activityId } = req.body ?? {};
+
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized: Invalid context identity.' });
+        return;
+      }
+
+      const ownership = await ensureTripOwnership(tripId, userId);
+      if (!ownership.exists) {
+        res.status(404).json({ error: 'Trip not found.' });
+        return;
+      }
+      if (!ownership.owner) {
+        res.status(403).json({ error: 'Forbidden: You do not own this trip.' });
+        return;
+      }
+
+      if (!s3Url || typeof s3Url !== 'string') {
+        res.status(400).json({ error: 's3Url is required.' });
+        return;
+      }
+
+      if (mediaType !== 'image' && mediaType !== 'video') {
+        res.status(400).json({ error: 'mediaType must be image or video.' });
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('trip_media')
+        .insert({
+          trip_id: tripId,
+          s3_url: s3Url,
+          media_type: mediaType,
+          caption: typeof caption === 'string' ? caption : null,
+          activity_id: activityId ? Number(activityId) : null,
+        })
+        .select('id, trip_id, s3_url, media_type, caption, activity_id, created_at')
+        .single();
+
+      if (error || !data) {
+        res.status(500).json({ error: 'Failed to save trip media metadata.' });
+        return;
+      }
+
+      res.status(201).json({ media: data });
+    } catch (error) {
+      console.error('Error saving trip media metadata:', error);
+      res.status(500).json({ error: 'Failed to save trip media metadata.' });
     }
   });
 

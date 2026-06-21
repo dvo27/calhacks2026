@@ -213,10 +213,48 @@ function fallbackParsedActivities(): ASIOneActivity[] {
 
 
 export async function schedulePokeReminder(userId: string, activityName: string, startTime: string) {
-  console.log(`Scheduling push reminder notification with Poke for: "${activityName}"`);
+  const pokeWebhookUrl = getBackendEnv('POKE_WEBHOOK_URL', 'POKE_API_URL');
+  const pokeApiKey = getBackendEnv('POKE_API_KEY', 'POKE_SECRET_KEY');
+
+  if (!pokeWebhookUrl) {
+    console.warn(`POKE_WEBHOOK_URL is not configured. Falling back to local reminder stub for "${activityName}".`);
+    return {
+      userId,
+      startTime,
+      activityName,
+      poke_job_id: `poke_reminder_${Math.random().toString(36).substring(2, 11)}`,
+      mode: 'stub' as const,
+    };
+  }
+
+  const response = await fetch(pokeWebhookUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(pokeApiKey ? { authorization: `Bearer ${pokeApiKey}` } : {}),
+    },
+    body: JSON.stringify({
+      userId,
+      activityName,
+      startTime,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => '');
+    throw new Error(`Poke request failed with status ${response.status}: ${errorText || response.statusText}`);
+  }
+
+  const data = (await response.json().catch(() => ({}))) as {
+    jobId?: string;
+    id?: string;
+  };
+
   return {
     userId,
     startTime,
-    poke_job_id: `poke_reminder_${Math.random().toString(36).substring(2, 11)}`,
+    activityName,
+    poke_job_id: data.jobId ?? data.id ?? `poke_reminder_${Math.random().toString(36).substring(2, 11)}`,
+    mode: 'webhook' as const,
   };
 }
