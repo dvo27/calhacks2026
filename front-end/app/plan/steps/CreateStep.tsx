@@ -28,6 +28,7 @@ export default function CreateStep() {
   const startLocation = useTrekStore((s) => s.startLocation);
   const stops = useTrekStore((s) => s.stops);
   const addStop = useTrekStore((s) => s.addStop);
+  const removeStop = useTrekStore((s) => s.removeStop);
   const setPlanStep = useTrekStore((s) => s.setPlanStep);
 
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -76,9 +77,14 @@ export default function CreateStep() {
   }
 
   function handleCandidatePress(candidate: MapCandidate) {
+    // already added → ignore (the numbered pin handles deselection on tap)
+    if (stops.some((s: any) => s.id === candidate.id)) return;
+
     const match = candidates.find((c) => `${c.osmType}-${c.osmId}` === candidate.id);
     if (!match) return;
 
+    // Keep the candidate in the list so removing the stop reverts it to a "+" pin.
+    // DiscoverMap hides the "+" while it's an active stop, so it never double-renders.
     addStop({
       id: candidate.id,
       name: match.name,
@@ -97,9 +103,11 @@ export default function CreateStep() {
       cost: 0,
       locationName: match.displayAddress ?? undefined,
     });
+  }
 
-    // remove from candidates so it doesn't show as both a "+" and a numbered pin
-    setCandidates((prev) => prev.filter((c) => `${c.osmType}-${c.osmId}` !== candidate.id));
+  // tap an added (numbered) pin to deselect → removes it from the itinerary
+  function handleStopPress(stop: { id: string }) {
+    removeStop(stop.id);
   }
 
   function handleLongPress(coord: { latitude: number; longitude: number }) {
@@ -166,6 +174,7 @@ export default function CreateStep() {
         focusPoint={focusPoint}
         onLongPress={handleLongPress}
         onCandidatePress={handleCandidatePress}
+        onStopPress={handleStopPress}
       />
 
       <View style={[styles.tray, { paddingBottom: insets.bottom + 10 }]}>

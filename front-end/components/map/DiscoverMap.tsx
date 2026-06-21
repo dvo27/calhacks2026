@@ -1,7 +1,36 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ComponentProps } from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 import MapView, { Marker, Polyline, LongPressEvent } from 'react-native-maps';
 import { Colors } from '@/constants/colors';
+
+type SnapshotMarkerProps = ComponentProps<typeof Marker> & { redrawKey?: string | number };
+
+/**
+ * A Marker that self-manages `tracksViewChanges`. On Apple Maps (iOS), a custom
+ * marker view is snapshotted to a static image; if tracking is off when it mounts,
+ * the snapshot is captured before the view lays out and the pin renders BLANK until
+ * the map redraws (e.g. you tap another marker). A blank pin also makes taps fall
+ * through to a neighbor, so the wrong callout/title shows.
+ *
+ * Each marker independently tracks for a beat after it mounts (and whenever its
+ * rendered content changes), captures a correct snapshot, then stops — which keeps
+ * callouts stable and avoids the perpetual re-render cost of leaving tracking on.
+ */
+function SnapshotMarker({ redrawKey, children, ...markerProps }: SnapshotMarkerProps) {
+  const [tracks, setTracks] = useState(true);
+
+  useEffect(() => {
+    setTracks(true);
+    const timer = setTimeout(() => setTracks(false), 1000);
+    return () => clearTimeout(timer);
+  }, [redrawKey]);
+
+  return (
+    <Marker {...markerProps} tracksViewChanges={tracks}>
+      {children}
+    </Marker>
+  );
+}
 
 export interface MapStop {
   id: string;
@@ -25,6 +54,7 @@ interface DiscoverMapProps {
   focusPoint?: { latitude: number; longitude: number } | null;
   onLongPress: (coord: { latitude: number; longitude: number }) => void;
   onCandidatePress?: (candidate: MapCandidate) => void;
+  onStopPress?: (stop: MapStop) => void;
 }
 
 export default function DiscoverMap({
@@ -35,10 +65,12 @@ export default function DiscoverMap({
   focusPoint,
   onLongPress,
   onCandidatePress,
+  onStopPress,
 }: DiscoverMapProps) {
   const mapRef = useRef<MapView>(null);
   const [mapReady, setMapReady] = useState(false);
   const prevCandidateCountRef = useRef(0);
+  const addedIds = new Set(stops.map((s) => s.id));
 
   function handleLongPress(e: LongPressEvent) {
     onLongPress(e.nativeEvent.coordinate);
@@ -118,39 +150,58 @@ export default function DiscoverMap({
           />
         )}
 
-        {/* unconfirmed search results — tap to add to itinerary */}
-        {candidates.map((c) => (
-          <Marker
-            key={`cand-${c.id}`}
-            coordinate={{ latitude: c.lat, longitude: c.lng }}
-            title={c.name}
-            onPress={() => onCandidatePress?.(c)}
-          >
-            <View style={styles.candidatePin}>
-              <Text style={styles.candidatePinText}>＋</Text>
-            </View>
-          </Marker>
-        ))}
+        {/* unconfirmed search results — tap to add to itinerary. A candidate
+            already added as a stop is hidden here; its numbered pin stands in. */}
+        {candidates
+          .filter((c) => !addedIds.has(c.id))
+          .map((c) => (
+            <SnapshotMarker
+              key={`cand-${c.id}`}
+              redrawKey={`cand-${c.id}`}
+              coordinate={{ latitude: c.lat, longitude: c.lng }}
+              title={c.name}
+              onPress={() => onCandidatePress?.(c)}
+            >
+              <View style={styles.candidatePin}>
+                <Text style={styles.candidatePinText}>＋</Text>
+              </View>
+            </SnapshotMarker>
+          ))}
 
-        {/* confirmed itinerary stops — numbered, in order */}
+        {/* confirmed itinerary stops — numbered, named, in order. Tap to deselect (remove). */}
         {stops.map((s, i) => (
-          <Marker key={s.id} coordinate={{ latitude: s.lat, longitude: s.lng }} title={s.name}>
-            <View style={styles.pin}>
-              <Text style={styles.pinText}>{i + 1}</Text>
+          <SnapshotMarker
+            key={s.id}
+            redrawKey={`${s.id}:${i + 1}:${s.name}`}
+            coordinate={{ latitude: s.lat, longitude: s.lng }}
+            title={s.name}
+            zIndex={1}
+            onPress={() => onStopPress?.(s)}
+          >
+            <View style={styles.stopMarker}>
+              <View style={styles.pin}>
+                <Text style={styles.pinText}>{i + 1}</Text>
+              </View>
+              <View style={styles.stopLabel}>
+                <Text style={styles.stopLabelText} numberOfLines={1}>
+                  {s.name}
+                </Text>
+              </View>
             </View>
-          </Marker>
+          </SnapshotMarker>
         ))}
 
         {currentLocation && (
-          <Marker
+          <SnapshotMarker
             key="current-location"
+            redrawKey="current-location"
             coordinate={{ latitude: currentLocation.latitude, longitude: currentLocation.longitude }}
             title="You are here"
           >
             <View style={styles.currentLocationPin}>
               <View style={styles.currentLocationCore} />
             </View>
-          </Marker>
+          </SnapshotMarker>
         )}
       </MapView>
 
@@ -179,6 +230,21 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   pinText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  stopMarker: { alignItems: 'center' },
+  stopLabel: {
+    marginTop: 4,
+    maxWidth: 140,
+    backgroundColor: '#fff',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.2,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  stopLabelText: { color: Colors.ink, fontWeight: '700', fontSize: 11 },
   currentLocationPin: {
     width: 24,
     height: 24,
