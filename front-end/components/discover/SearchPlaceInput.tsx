@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { View, TextInput, TouchableOpacity, Text, StyleSheet } from 'react-native';
+import { AppState, View, TextInput, TouchableOpacity, Text, StyleSheet } from 'react-native';
 import { Colors } from '@/constants/colors';
 import { getPlaceSuggestions, PlaceSuggestion } from '@/lib/api';
 import * as Location from 'expo-location';
@@ -36,6 +36,7 @@ export default function SearchPlaceInput({
   const [locationStatus, setLocationStatus] = useState<'loading' | 'granted' | 'denied'>('loading');
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchRunRef = useRef(0);
+  const activeSearchControllerRef = useRef<AbortController | null>(null);
   const originCoordsRef = useRef<{ latitude: number; longitude: number } | null>(null);
   const locationReadyRef = useRef<Promise<void> | null>(null);
   const resolveLocationReadyRef = useRef<(() => void) | null>(null);
@@ -51,6 +52,15 @@ export default function SearchPlaceInput({
     let cancelled = false;
     locationReadyRef.current = new Promise<void>((resolve) => {
       resolveLocationReadyRef.current = resolve;
+    });
+
+    const appStateSubscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active') {
+        searchRunRef.current += 1;
+        if (debounceRef.current) clearTimeout(debounceRef.current);
+        activeSearchControllerRef.current?.abort();
+        activeSearchControllerRef.current = null;
+      }
     });
 
     async function requestLocation() {
@@ -94,6 +104,9 @@ export default function SearchPlaceInput({
       resolveLocationReadyRef.current?.();
       resolveLocationReadyRef.current = null;
       if (debounceRef.current) clearTimeout(debounceRef.current);
+      activeSearchControllerRef.current?.abort();
+      activeSearchControllerRef.current = null;
+      appStateSubscription.remove();
     };
   }, []);
 
@@ -111,10 +124,21 @@ export default function SearchPlaceInput({
   async function runSearch(text: string) {
     const runId = searchRunRef.current + 1;
     searchRunRef.current = runId;
+    activeSearchControllerRef.current?.abort();
+    const controller = new AbortController();
+    activeSearchControllerRef.current = controller;
     setLoading(true);
     try {
+      if (AppState.currentState !== 'active') {
+        return;
+      }
+
       if (!originCoordsRef.current && locationStatus === 'loading' && locationReadyRef.current) {
         await locationReadyRef.current;
+      }
+
+      if (controller.signal.aborted || AppState.currentState !== 'active') {
+        return;
       }
 
       const originQuery = locationQuery.trim() || DEFAULT_LOCATION_QUERY;
@@ -124,7 +148,14 @@ export default function SearchPlaceInput({
 
       onResults([]);
 
-      const data = await getPlaceSuggestions(originQuery, searchQuery, originCoords, SEARCH_RADIUS_METERS, SEARCH_LIMIT);
+      const data = await getPlaceSuggestions(
+        originQuery,
+        searchQuery,
+        originCoords,
+        SEARCH_RADIUS_METERS,
+        SEARCH_LIMIT,
+        controller.signal
+      );
       if (searchRunRef.current !== runId) {
         return;
       }
@@ -145,17 +176,24 @@ export default function SearchPlaceInput({
           }
         }
 
+        if (controller.signal.aborted || AppState.currentState !== 'active') {
+          return;
+        }
+
         onResults([...seen.values()]);
         await new Promise((resolve) => setTimeout(resolve, 140));
       }
     } catch (err) {
-      if (searchRunRef.current === runId) {
+      if (searchRunRef.current === runId && !controller.signal.aborted) {
         console.warn('Place suggestions failed', err);
         onResults([]);
       }
     } finally {
       if (searchRunRef.current === runId) {
         setLoading(false);
+      }
+      if (activeSearchControllerRef.current === controller) {
+        activeSearchControllerRef.current = null;
       }
     }
   }

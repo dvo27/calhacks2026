@@ -29,6 +29,8 @@ async function getAuthHeader() {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+const REQUEST_TIMEOUT_MS = 15000;
+
 async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> {
   const authHeader = await getAuthHeader();
   const headers = new Headers(options.headers ?? {});
@@ -38,10 +40,26 @@ async function apiFetch<T>(path: string, options: RequestInit = {}): Promise<T> 
     headers.set(key, value);
   }
 
-  const res = await fetch(new URL(path, `${API_BASE_URL}/`).toString(), {
-    ...options,
-    headers,
-  });
+  // Abort hung requests so the UI surfaces an error instead of spinning forever
+  // (e.g. when the backend stalls on an unreachable Redis).
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  let res: Response;
+  try {
+    res = await fetch(new URL(path, `${API_BASE_URL}/`).toString(), {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new Error('Request timed out. Is the backend running and reachable?');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
@@ -99,10 +117,12 @@ export function getPlaceSuggestions(
   searchQuery = '',
   originCoords?: { latitude: number; longitude: number },
   radiusMeters = 3000,
-  limit = 20
+  limit = 20,
+  signal?: AbortSignal
 ) {
   return apiFetch<PlaceSuggestionsResponse>('/api/trips/place-suggestions', {
     method: 'POST',
+    signal,
     body: JSON.stringify({
       locationQuery,
       searchQuery,
@@ -148,8 +168,75 @@ export function deleteTripActivity(activityId: number | string) {
   return apiFetch<void>(`/api/trips/activities/${activityId}`, { method: 'DELETE' });
 }
 
+export interface TimelineActivity {
+  id: number;
+  title: string;
+  description: string | null;
+  locationName: string | null;
+  coordinates: { latitude: number; longitude: number } | null;
+  startTime: string | null;
+  endTime: string | null;
+  durationMinutes: number | null;
+  cost: number;
+  tags: string[];
+  rating: number | null;
+}
+
+export interface TripTimelineResponse {
+  trip: {
+    id: number;
+    title: string;
+    isPublic: boolean;
+    createdAt: string;
+    totalBudget: number;
+    totalDistanceMiles: number | null;
+    totalDriveTimeMinutes: number | null;
+    totalGasCost: number | null;
+    user: { id: string; username: string | null; avatar_url: string | null } | null;
+  };
+  places: TimelineActivity[];
+  summary: {
+    stops: number;
+    totalDurationMinutes: number;
+    totalCost: number;
+    firstActivityAt: string | null;
+    lastActivityAt: string | null;
+  };
+}
+
 export function getTripTimeline(tripId: number | string) {
-  return apiFetch<any>(`/api/trips/${tripId}/timeline`, { method: 'GET' });
+  return apiFetch<TripTimelineResponse>(`/api/trips/${tripId}/timeline`, { method: 'GET' });
+}
+
+export interface UpdateActivityPayload {
+  title?: string;
+  cost?: number;
+  rating?: number | null;
+  start_time?: string | null;
+  end_time?: string | null;
+}
+
+export function updateActivity(activityId: number | string, payload: UpdateActivityPayload) {
+  return apiFetch<ActivityResponse>(`/api/trips/activities/${activityId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface UpdateTripPayload {
+  title?: string;
+  is_public?: boolean;
+  total_budget?: number;
+  total_distance_miles?: number;
+  total_drive_time_minutes?: number;
+  total_gas_cost?: number;
+}
+
+export function updateTrip(tripId: number | string, payload: UpdateTripPayload) {
+  return apiFetch<{ trip: { id: number; title: string; is_public: boolean } }>(`/api/trips/${tripId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
 }
 
 export function publishTrip(tripId: number | string) {
