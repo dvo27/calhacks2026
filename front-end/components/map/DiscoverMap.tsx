@@ -52,6 +52,7 @@ interface DiscoverMapProps {
   initialRegion: { latitude: number; longitude: number };
   currentLocation?: { latitude: number; longitude: number } | null;
   focusPoint?: { latitude: number; longitude: number } | null;
+  fitStopsToken?: number;
   onLongPress: (coord: { latitude: number; longitude: number }) => void;
   onCandidatePress?: (candidate: MapCandidate) => void;
   onStopPress?: (stop: MapStop) => void;
@@ -63,6 +64,7 @@ export default function DiscoverMap({
   initialRegion,
   currentLocation,
   focusPoint,
+  fitStopsToken,
   onLongPress,
   onCandidatePress,
   onStopPress,
@@ -103,6 +105,33 @@ export default function DiscoverMap({
       300
     );
   }, [focusPoint, mapReady]);
+
+  useEffect(() => {
+    if (!mapReady || !fitStopsToken || !stops.length) return;
+
+    const markerCoordinates = [
+      ...(currentLocation ? [{ latitude: currentLocation.latitude, longitude: currentLocation.longitude }] : []),
+      ...stops.map((stop) => ({ latitude: stop.lat, longitude: stop.lng })),
+    ];
+
+    if (markerCoordinates.length === 1) {
+      mapRef.current?.animateToRegion(
+        {
+          latitude: markerCoordinates[0].latitude,
+          longitude: markerCoordinates[0].longitude,
+          latitudeDelta: 0.05,
+          longitudeDelta: 0.05,
+        },
+        300
+      );
+      return;
+    }
+
+    mapRef.current?.fitToCoordinates(markerCoordinates, {
+      edgePadding: { top: 110, right: 70, bottom: 260, left: 70 },
+      animated: true,
+    });
+  }, [currentLocation, fitStopsToken, mapReady, stops]);
 
   // Frame the map around incoming search results. Gated on the candidate set
   // GROWING so that adding/removing itinerary stops never moves the camera —

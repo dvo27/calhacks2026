@@ -3,6 +3,7 @@ import { supabase } from './services/supabase.js';
 import { callASIOneParser, schedulePokeReminder } from './services/integrations.js';
 import { loadBackendEnv, getBackendEnv } from './config/env.js';
 import { invalidateTripTimeline } from './services/timeline.js';
+import { invalidateMainFeedCache } from './services/feed.js';
 
 loadBackendEnv();
 
@@ -64,6 +65,7 @@ const worker = new Worker<ItineraryJobData>(
       if (tripUpdateError) throw tripUpdateError;
 
       await invalidateTripTimeline(tripId);
+      await invalidateMainFeedCache();
 
       console.log(`[Job ${job.id}] Successfully generated timeline, synced hooks, and compiled metrics!`);
       return { success: true, count: parsedActivities.length };

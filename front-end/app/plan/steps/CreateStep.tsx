@@ -29,6 +29,7 @@ export default function CreateStep() {
   const startLocation = useTrekStore((s) => s.startLocation);
   const stops = useTrekStore((s) => s.stops);
   const addStop = useTrekStore((s) => s.addStop);
+  const setStops = useTrekStore((s) => s.setStops);
   const removeStop = useTrekStore((s) => s.removeStop);
   const setPlanStep = useTrekStore((s) => s.setPlanStep);
 
@@ -40,6 +41,7 @@ export default function CreateStep() {
   const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [mapRegion, setMapRegion] = useState(DEFAULT_REGION);
   const [focusPoint, setFocusPoint] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [fitStopsToken, setFitStopsToken] = useState(0);
 
   useEffect(() => {
     (async () => {
@@ -170,6 +172,29 @@ export default function CreateStep() {
         onResults={handleResults}
         onDeviceLocationResolved={(origin) => setCurrentLocation(origin)}
         onSearchOriginResolved={(origin) => setFocusPoint({ latitude: origin.lat, longitude: origin.lng })}
+        onVoiceItineraryCreated={({ trip, activities }) => {
+          setTripId(trip.id);
+          const voicedStops = activities
+            .filter((activity) => Number.isFinite(activity.lat) && Number.isFinite(activity.lng))
+            .map((activity, index) => ({
+              id: `voice-${trip.id}-${index}-${activity.title}`,
+              name: activity.title,
+              address: activity.location_name,
+              cat: categoryFilter !== 'all' ? categoryFilter : 'attractions',
+              price: 0,
+              dur: 60,
+              lat: activity.lat,
+              lng: activity.lng,
+            }));
+
+          if (voicedStops.length) {
+            setStops(voicedStops as any);
+            setFocusPoint({ latitude: voicedStops[0].lat, longitude: voicedStops[0].lng });
+            setFitStopsToken((value) => value + 1);
+          }
+
+          setPlanStep('discover');
+        }}
       />
 
       <TagRow
@@ -185,6 +210,7 @@ export default function CreateStep() {
         initialRegion={mapRegion}
         currentLocation={currentLocation}
         focusPoint={focusPoint}
+        fitStopsToken={fitStopsToken}
         onLongPress={handleLongPress}
         onCandidatePress={handleCandidatePress}
         onStopPress={handleStopPress}
