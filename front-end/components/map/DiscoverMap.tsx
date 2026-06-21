@@ -10,13 +10,28 @@ export interface MapStop {
   lng: number;
 }
 
-interface DiscoverMapProps {
-  stops: MapStop[];
-  initialRegion: { latitude: number; longitude: number };
-  onLongPress: (coord: { latitude: number; longitude: number }) => void;
+export interface MapCandidate {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
 }
 
-export default function DiscoverMap({ stops, initialRegion, onLongPress }: DiscoverMapProps) {
+interface DiscoverMapProps {
+  stops: MapStop[];
+  candidates?: MapCandidate[];
+  initialRegion: { latitude: number; longitude: number };
+  onLongPress: (coord: { latitude: number; longitude: number }) => void;
+  onCandidatePress?: (candidate: MapCandidate) => void;
+}
+
+export default function DiscoverMap({
+  stops,
+  candidates = [],
+  initialRegion,
+  onLongPress,
+  onCandidatePress,
+}: DiscoverMapProps) {
   const mapRef = useRef<MapView>(null);
 
   function handleLongPress(e: LongPressEvent) {
@@ -44,12 +59,23 @@ export default function DiscoverMap({ stops, initialRegion, onLongPress }: Disco
           />
         )}
 
-        {stops.map((s, i) => (
+        {/* unconfirmed search results — tap to add to itinerary */}
+        {candidates.map((c) => (
           <Marker
-            key={s.id}
-            coordinate={{ latitude: s.lat, longitude: s.lng }}
-            title={s.name}
+            key={`cand-${c.id}`}
+            coordinate={{ latitude: c.lat, longitude: c.lng }}
+            title={c.name}
+            onPress={() => onCandidatePress?.(c)}
           >
+            <View style={styles.candidatePin}>
+              <Text style={styles.candidatePinText}>＋</Text>
+            </View>
+          </Marker>
+        ))}
+
+        {/* confirmed itinerary stops — numbered, in order */}
+        {stops.map((s, i) => (
+          <Marker key={s.id} coordinate={{ latitude: s.lat, longitude: s.lng }} title={s.name}>
             <View style={styles.pin}>
               <Text style={styles.pinText}>{i + 1}</Text>
             </View>
@@ -82,6 +108,21 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   pinText: { color: '#fff', fontWeight: '700', fontSize: 12 },
+  candidatePin: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: Colors.ink,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  candidatePinText: { color: '#fff', fontWeight: '700', fontSize: 13 },
   hint: {
     position: 'absolute',
     bottom: 14,

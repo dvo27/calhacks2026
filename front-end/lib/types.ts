@@ -1,6 +1,6 @@
 export type StopCat = 'food' | 'shopping' | 'nightlife' | 'attractions';
 
-export type PlanStep = 'location' | 'acts' | 'discover' | 'plan';
+export type PlanStep = 'discover' | 'plan';
 
 export interface Activity {
   id: string;

@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import { Colors } from '@/constants/colors';
 import { useTrekStore } from '@/lib/store';
-import SearchPlaceInput, { PlaceResult } from '@/components/discover/SearchPlaceInput';
+import { addTripActivity, createTrip, PlaceSuggestion } from '@/lib/api';
+import SearchPlaceInput from '@/components/discover/SearchPlaceInput';
 import TagRow from '@/components/discover/TagRow';
-import DiscoverMap from '@/components/map/DiscoverMap';
+import DiscoverMap, { MapCandidate } from '@/components/map/DiscoverMap';
 import DropPinSheet, { DropPinResult } from '@/components/discover/DropPinSheet';
 
-const DEFAULT_REGION = { latitude: 34.0900, longitude: -118.3617 }; // West Hollywood — TODO: geocode store.exploreArea
+const DEFAULT_REGION = { latitude: 34.0900, longitude: -118.3617 }; // TODO: geocode store.exploreArea
 
 let stopCounter = 0;
 function nextStopId() {
@@ -18,7 +20,11 @@ function nextStopId() {
 
 export default function CreateStep() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
 
+  const tripId = useTrekStore((s) => s.tripId);
+  const setTripId = useTrekStore((s) => s.setTripId);
+  const exploreArea = useTrekStore((s) => s.exploreArea);
   const stops = useTrekStore((s) => s.stops);
   const addStop = useTrekStore((s) => s.addStop);
   const setPlanStep = useTrekStore((s) => s.setPlanStep);
@@ -26,21 +32,71 @@ export default function CreateStep() {
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [priceFilter, setPriceFilter] = useState('all');
 
+  // search results shown as unconfirmed "+" pins on the map until tapped
+  const [candidates, setCandidates] = useState<PlaceSuggestion[]>([]);
+
   const [pendingCoord, setPendingCoord] = useState<{ latitude: number; longitude: number } | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const totalCost = stops.reduce((sum: number, s: any) => sum + (s.cost || 0), 0);
 
-  function handleSelectPlace(place: PlaceResult) {
+  async function ensureTripExists() {
+    if (tripId) return tripId;
+    try {
+      const { trip } = await createTrip(exploreArea ? `${exploreArea} day` : 'New day');
+      setTripId(trip.id);
+      return trip.id;
+    } catch (err) {
+      console.warn('Failed to create trip lazily', err);
+      return null;
+    }
+  }
+
+  async function persistActivity(opts: { name: string; lat: number; lng: number; cat: string; cost: number; locationName?: string }) {
+    const id = await ensureTripExists();
+    if (!id) return;
+    try {
+      await addTripActivity(id, {
+        title: opts.name,
+        cost: opts.cost,
+        location_name: opts.locationName ?? opts.name,
+        tags: [opts.cat],
+        location_coords: { lat: opts.lat, lng: opts.lng },
+      });
+    } catch (err) {
+      console.warn('Failed to persist activity to backend', err);
+    }
+  }
+
+  function handleResults(places: PlaceSuggestion[]) {
+    setCandidates(places);
+  }
+
+  function handleCandidatePress(candidate: MapCandidate) {
+    const match = candidates.find((c) => `${c.osmType}-${c.osmId}` === candidate.id);
+    if (!match) return;
+
     addStop({
-      id: place.placeId,
-      name: place.name,
-      lat: place.lat,
-      lng: place.lng,
-      cat: categoryFilter !== 'all' ? categoryFilter : 'food',
+      id: candidate.id,
+      name: match.name,
+      lat: match.lat,
+      lng: match.lng,
+      cat: match.category || (categoryFilter !== 'all' ? categoryFilter : 'food'),
       cost: 0,
       dur: 45,
     } as any);
+
+    persistActivity({
+      name: match.name,
+      lat: match.lat,
+      lng: match.lng,
+      cat: match.category,
+      cost: 0,
+      locationName: match.displayAddress ?? undefined,
+    });
+
+    // remove from candidates so it doesn't show as both a "+" and a numbered pin
+    setCandidates((prev) => prev.filter((c) => `${c.osmType}-${c.osmId}` !== candidate.id));
   }
 
   function handleLongPress(coord: { latitude: number; longitude: number }) {
@@ -60,6 +116,14 @@ export default function CreateStep() {
         dur: result.dur,
         custom: true,
       } as any);
+
+      persistActivity({
+        name: result.name,
+        lat: pendingCoord.latitude,
+        lng: pendingCoord.longitude,
+        cat: result.cat,
+        cost: result.cost,
+      });
     }
     setSheetOpen(false);
     setPendingCoord(null);
@@ -68,7 +132,7 @@ export default function CreateStep() {
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <TouchableOpacity style={styles.backBtn} onPress={() => setPlanStep('acts')}>
+        <TouchableOpacity style={styles.backBtn} onPress={() => router.back()}>
           <Text style={styles.backIcon}>‹</Text>
         </TouchableOpacity>
         <View>
@@ -77,7 +141,7 @@ export default function CreateStep() {
         </View>
       </View>
 
-      <SearchPlaceInput onSelect={handleSelectPlace} />
+      <SearchPlaceInput areaContext={exploreArea} onResults={handleResults} />
 
       <TagRow
         categoryFilter={categoryFilter}
@@ -88,8 +152,10 @@ export default function CreateStep() {
 
       <DiscoverMap
         stops={stops.map((s: any) => ({ id: s.id, name: s.name, lat: s.lat, lng: s.lng }))}
+        candidates={candidates.map((c) => ({ id: `${c.osmType}-${c.osmId}`, name: c.name, lat: c.lat, lng: c.lng }))}
         initialRegion={DEFAULT_REGION}
         onLongPress={handleLongPress}
+        onCandidatePress={handleCandidatePress}
       />
 
       <View style={[styles.tray, { paddingBottom: insets.bottom + 10 }]}>

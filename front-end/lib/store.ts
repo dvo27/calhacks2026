@@ -6,6 +6,10 @@ interface TrekStore {
   planStep: PlanStep;
   setPlanStep: (step: PlanStep) => void;
 
+  // backend trip
+  tripId: number | null;
+  setTripId: (id: number | null) => void;
+
   // create step
   startLocation: string;
   setStartLocation: (v: string) => void;
@@ -41,8 +45,11 @@ interface TrekStore {
 }
 
 export const useTrekStore = create<TrekStore>((set) => ({
-  planStep: 'location',
+  planStep: 'discover',
   setPlanStep: (step) => set({ planStep: step }),
+
+  tripId: null,
+  setTripId: (id) => set({ tripId: id }),
 
   startLocation: '',
   setStartLocation: (v) => set({ startLocation: v }),
@@ -80,7 +87,8 @@ export const useTrekStore = create<TrekStore>((set) => ({
 
   startNewDay: () =>
     set({
-      planStep: 'location',
+      planStep: 'discover',
+      tripId: null,
       startLocation: '',
       exploreArea: '',
       exploreDate: '',
