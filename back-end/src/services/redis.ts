@@ -36,14 +36,8 @@ export async function getRedisClient() {
     });
   }
 
-  if (redisClient.status === 'wait' || redisClient.status === 'end') {
-    try {
-      await redisClient.connect();
-    } catch (error) {
-      redisUnavailable = true;
-      console.error('Redis cache client unavailable:', (error as Error).message);
-      return null;
-    }
+  if (redisClient.status !== 'ready') {
+    return null;
   }
 
   return redisClient;
