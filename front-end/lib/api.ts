@@ -133,6 +133,53 @@ export function getPlaceSuggestions(
   });
 }
 
+export interface RecommendationStop {
+  title: string;
+  display_address?: string | null;
+  lat: number;
+  lng: number;
+}
+
+export interface RecommendationItem {
+  kind: 'place' | 'trip';
+  title: string;
+  reason: string;
+  category?: string | null;
+  display_address?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  price_tier?: number | null;
+  tags?: string[];
+  stops?: RecommendationStop[];
+  score?: number;
+}
+
+export interface RecommendationsResponse {
+  headline: string;
+  origin: { displayName: string; lat: number; lng: number };
+  query: string;
+  recommendations: RecommendationItem[];
+}
+
+export function getRecommendations(
+  locationQuery: string,
+  searchQuery = '',
+  originCoords?: { latitude: number; longitude: number },
+  radiusMeters = 5000,
+  limit = 8
+) {
+  return apiFetch<RecommendationsResponse>('/api/trips/recommendations', {
+    method: 'POST',
+    body: JSON.stringify({
+      locationQuery,
+      searchQuery,
+      originCoords,
+      radiusMeters,
+      limit,
+    }),
+  });
+}
+
 export interface CreateActivityPayload {
   title: string;
   description?: string;

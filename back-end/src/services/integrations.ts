@@ -15,6 +15,24 @@ export type ASIOneActivity = {
   rating?: number | null;
 };
 
+export type ASIOneRecommendation = {
+  kind: 'place' | 'trip';
+  title: string;
+  reason: string;
+  category?: string;
+  display_address?: string;
+  lat?: number;
+  lng?: number;
+  price_tier?: number | null;
+  tags?: string[];
+  stops?: Array<{
+    title: string;
+    display_address?: string;
+    lat: number;
+    lng: number;
+  }>;
+};
+
 type ASIOneResponseShape =
   | ASIOneActivity[]
   | {
@@ -26,6 +44,12 @@ type ASIOneStructuredResponse = {
   itinerary_name?: string;
   activities?: ASIOneActivity[];
   data?: ASIOneActivity[];
+};
+
+type ASIOneRecommendationsResponse = {
+  headline?: string;
+  recommendations?: ASIOneRecommendation[];
+  data?: ASIOneRecommendation[];
 };
 
 function getAsiBaseUrl() {
@@ -106,6 +130,108 @@ function buildResponseFormat() {
   };
 }
 
+function buildRecommendationsResponseFormat() {
+  return {
+    type: 'json_schema',
+    json_schema: {
+      name: 'trip_recommendations',
+      strict: true,
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          headline: { type: 'string' },
+          recommendations: {
+            type: 'array',
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                kind: { type: 'string', enum: ['place', 'trip'] },
+                title: { type: 'string' },
+                reason: { type: 'string' },
+                category: { type: 'string' },
+                display_address: { type: 'string' },
+                lat: { type: 'number' },
+                lng: { type: 'number' },
+                price_tier: {
+                  anyOf: [{ type: 'integer' }, { type: 'null' }],
+                },
+                tags: {
+                  type: 'array',
+                  items: { type: 'string' },
+                },
+                stops: {
+                  type: 'array',
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      title: { type: 'string' },
+                      display_address: { type: 'string' },
+                      lat: { type: 'number' },
+                      lng: { type: 'number' },
+                    },
+                    required: ['title', 'lat', 'lng'],
+                  },
+                },
+              },
+              required: ['kind', 'title', 'reason'],
+            },
+          },
+        },
+        required: ['recommendations'],
+      },
+    },
+  };
+}
+
+async function postAsiJson<T>(
+  paths: string[],
+  body: string,
+  apiKey: string | null,
+  timeoutMs: number
+): Promise<T> {
+  const baseUrl = getAsiBaseUrl();
+  if (!baseUrl) {
+    throw new Error('ASI_BASE_URL is not configured.');
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    let lastError: Error | null = null;
+
+    for (const path of paths) {
+      const endpoint = new URL(path, baseUrl).toString();
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        },
+        body,
+        signal: controller.signal,
+      });
+
+      if (response.ok) {
+        return (await response.json()) as T;
+      }
+
+      const errorText = await response.text().catch(() => '');
+      lastError = new Error(`ASI request failed with status ${response.status} at ${path}: ${errorText || response.statusText}`);
+      if (response.status !== 404) {
+        throw lastError;
+      }
+    }
+
+    throw lastError ?? new Error('ASI request failed.');
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 
 export async function callASIOneParser(rawText: string): Promise<ASIOneActivity[]> {
   const baseUrl = getAsiBaseUrl();
@@ -115,20 +241,18 @@ export async function callASIOneParser(rawText: string): Promise<ASIOneActivity[
     return fallbackParsedActivities();
   }
 
-  const apiKey = getAsiApiKey();
-  const timeoutMs = getAsiTimeoutMs();
-  const endpoint = new URL(getAsiParsePath(), baseUrl).toString();
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-
   try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-      },
-      body: JSON.stringify({
+    const apiKey = getAsiApiKey() ?? null;
+    const timeoutMs = getAsiTimeoutMs();
+    const data = await postAsiJson<{
+      choices?: Array<{
+        message?: {
+          content?: string | null;
+        };
+      }>;
+    }>(
+      [getAsiParsePath(), '/chat/completions', '/v1/chat/completions', '/responses', '/v1/responses'],
+      JSON.stringify({
         model: 'asi1',
         messages: [
           {
@@ -143,21 +267,9 @@ export async function callASIOneParser(rawText: string): Promise<ASIOneActivity[
         ],
         response_format: buildResponseFormat(),
       }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => '');
-      throw new Error(`ASI request failed with status ${response.status}: ${errorText || response.statusText}`);
-    }
-
-    const data = (await response.json()) as {
-      choices?: Array<{
-        message?: {
-          content?: string | null;
-        };
-      }>;
-    };
+      apiKey,
+      timeoutMs
+    );
     const content = data.choices?.[0]?.message?.content;
 
     if (!content) {
@@ -175,8 +287,55 @@ export async function callASIOneParser(rawText: string): Promise<ASIOneActivity[
   } catch (error) {
     console.error('ASI parser request failed, falling back to local stub:', error);
     return fallbackParsedActivities();
-  } finally {
-    clearTimeout(timeout);
+  }
+}
+
+export async function callASIOneRecommendations(prompt: string): Promise<ASIOneRecommendationsResponse | null> {
+  const baseUrl = getAsiBaseUrl();
+
+  if (!baseUrl) {
+    console.warn('ASI_BASE_URL is not configured. Recommendation generation will fall back to heuristics.');
+    return null;
+  }
+
+  try {
+    const apiKey = getAsiApiKey() ?? null;
+    const timeoutMs = getAsiTimeoutMs();
+    const data = await postAsiJson<{
+      choices?: Array<{
+        message?: {
+          content?: string | null;
+        };
+      }>;
+    }>(
+      [getAsiParsePath(), '/chat/completions', '/v1/chat/completions', '/responses', '/v1/responses'],
+      JSON.stringify({
+        model: 'asi1',
+        messages: [
+          {
+            role: 'system',
+            content:
+              'You recommend trips and places to go. Return only valid JSON matching the schema. Favor concise, useful, locally relevant suggestions.',
+          },
+          {
+            role: 'user',
+            content: prompt,
+          },
+        ],
+        response_format: buildRecommendationsResponseFormat(),
+      }),
+      apiKey,
+      timeoutMs
+    );
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error('ASI recommendations response did not include message content.');
+    }
+
+    return JSON.parse(content) as ASIOneRecommendationsResponse;
+  } catch (error) {
+    console.error('ASI recommendations request failed, falling back to heuristics:', error);
+    return null;
   }
 }
 

@@ -5,8 +5,9 @@ import { requireAuth } from '../middleware/auth.js';
 import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { ensureTripOwnership, getTripEngagementCounts } from '../services/metrics.js';
 import { getTripTimeline, invalidateTripTimeline } from '../services/timeline.js';
-import { suggestPlacesForLocation } from '../services/places.js';
+import { suggestPlacesForLocation, type NearbyPlace } from '../services/places.js';
 import { uploadActivityImage } from '../services/storage.js';
+import { callASIOneRecommendations } from '../services/integrations.js';
 
 type TripsRouterOptions = {
   itineraryQueue: Queue;
@@ -34,6 +35,24 @@ type RoutePreviewPoint = {
   title: string;
   latitude: number;
   longitude: number;
+};
+
+type RecommendationItem = {
+  kind: 'place' | 'trip';
+  title: string;
+  reason: string;
+  category?: string | null;
+  display_address?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  price_tier?: number | null;
+  tags?: string[];
+  stops?: Array<{
+    title: string;
+    display_address?: string | null;
+    lat: number;
+    lng: number;
+  }>;
 };
 
 function toNumber(value: unknown, fallback = 0) {
@@ -183,6 +202,89 @@ function buildRoutePreviewPoints(activities: Array<{ id: number; title: string; 
   return (activities ?? [])
     .map((activity) => parseRoutePreviewPoint(activity))
     .filter((point): point is RoutePreviewPoint => point !== null);
+}
+
+function formatPlaceForPrompt(place: NearbyPlace, index: number) {
+  const parts = [
+    `${index + 1}. ${place.name}`,
+    place.category,
+    place.subcategory ? `(${place.subcategory})` : null,
+    place.displayAddress ? `— ${place.displayAddress}` : null,
+    `distance=${Math.round(place.distanceMeters)}m`,
+    place.priceTier !== null ? `price=${place.priceTier}` : null,
+    place.tags.length ? `tags=${place.tags.slice(0, 4).join(', ')}` : null,
+  ].filter(Boolean);
+  return parts.join(' ');
+}
+
+function fallbackRecommendations(places: NearbyPlace[], limit: number): RecommendationItem[] {
+  const placeRecommendations: RecommendationItem[] = places.slice(0, Math.max(1, limit - 1)).map((place) => ({
+    kind: 'place' as const,
+    title: place.name,
+    reason: `${place.category} near you${place.displayAddress ? ` · ${place.displayAddress}` : ''}`,
+    category: place.category,
+    display_address: place.displayAddress,
+    lat: place.lat,
+    lng: place.lng,
+    price_tier: place.priceTier,
+    tags: place.tags.slice(0, 6),
+  }));
+
+  const topTripStops = places.slice(0, 3);
+  if (topTripStops.length) {
+    const firstStop = topTripStops[0]!;
+    placeRecommendations.unshift({
+      kind: 'trip',
+      title: `${firstStop.category === 'food' ? 'Food crawl' : 'Best of the area'}`,
+      reason: 'A compact route built from the strongest nearby results.',
+      stops: topTripStops.map((place) => ({
+        title: place.name,
+        display_address: place.displayAddress,
+        lat: place.lat,
+        lng: place.lng,
+      })),
+    });
+  }
+
+  return placeRecommendations.slice(0, limit);
+}
+
+function normalizeRecommendations(aiRecommendations: RecommendationItem[] | undefined, places: NearbyPlace[], limit: number) {
+  const fallback = fallbackRecommendations(places, limit);
+  if (!aiRecommendations?.length) {
+    return fallback;
+  }
+
+  const normalized = aiRecommendations
+    .map((item) => ({
+      kind: item.kind,
+      title: item.title?.trim(),
+      reason: item.reason?.trim(),
+      category: item.category ?? null,
+      display_address: item.display_address ?? null,
+      lat: typeof item.lat === 'number' ? item.lat : null,
+      lng: typeof item.lng === 'number' ? item.lng : null,
+      price_tier: typeof item.price_tier === 'number' ? item.price_tier : null,
+      tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === 'string' && tag.length > 0) : [],
+      stops: Array.isArray(item.stops)
+        ? item.stops
+            .filter((stop) => typeof stop.title === 'string' && typeof stop.lat === 'number' && typeof stop.lng === 'number')
+            .map((stop) => ({
+              title: stop.title,
+              display_address: stop.display_address ?? null,
+              lat: stop.lat,
+              lng: stop.lng,
+            }))
+        : undefined,
+    }))
+    .filter((item) => item.title && item.reason)
+    .slice(0, limit);
+
+  if (!normalized.length) {
+    return fallback;
+  }
+
+  return normalized;
 }
 
 async function loadRoutePreviewPointsByTripId(tripIds: Array<number | string>) {
@@ -425,6 +527,60 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
     } catch (error) {
       console.error('Error fetching place suggestions:', error);
       res.status(500).json({ error: 'Failed to fetch place suggestions.' });
+    }
+  });
+
+  router.post('/recommendations', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const userId = req.user?.id;
+      const { locationQuery, searchQuery, originCoords, radiusMeters, limit } = req.body ?? {};
+
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized: Invalid context identity.' });
+        return;
+      }
+
+      if (!locationQuery || typeof locationQuery !== 'string') {
+        res.status(400).json({ error: 'locationQuery is required to fetch recommendations.' });
+        return;
+      }
+
+      const parsedRadius = Number(radiusMeters);
+      const parsedLimit = Number(limit);
+      const recommendationLimit = Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 6;
+      const searchText = typeof searchQuery === 'string' ? searchQuery.trim() : '';
+
+      const nearby = await suggestPlacesForLocation(
+        locationQuery,
+        searchText,
+        originCoords && typeof originCoords === 'object' ? originCoords : undefined,
+        Number.isFinite(parsedRadius) && parsedRadius > 0 ? parsedRadius : 5000,
+        Math.max(recommendationLimit * 2, 10)
+      );
+
+      const prompt = [
+        `User location query: ${locationQuery.trim()}`,
+        `Search intent: ${searchText || 'general recommendations'}`,
+        `Origin: ${nearby.origin.displayName} (${nearby.origin.lat}, ${nearby.origin.lng})`,
+        `Nearby candidate places:`,
+        ...nearby.places.slice(0, 12).map((place, index) => formatPlaceForPrompt(place, index)),
+        '',
+        'Return a mix of place recommendations and trip ideas. Prefer items that are nearby, match the search intent, and feel like they belong together.',
+        'For trip ideas, group 2-4 places into an ordered route with the best sequence first.',
+      ].join('\n');
+
+      const aiResponse = await callASIOneRecommendations(prompt);
+      const recommendations = normalizeRecommendations(aiResponse?.recommendations ?? aiResponse?.data, nearby.places, recommendationLimit);
+
+      res.status(200).json({
+        headline: aiResponse?.headline ?? `Recommended near ${nearby.origin.displayName}`,
+        origin: nearby.origin,
+        query: searchText,
+        recommendations,
+      });
+    } catch (error) {
+      console.error('Error building recommendations:', error);
+      res.status(500).json({ error: 'Failed to build recommendations.' });
     }
   });
 

@@ -11,6 +11,12 @@ type OriginCoords = {
   longitude: number;
 };
 
+type GeocodeResult = {
+  display_name?: string;
+  lat?: string;
+  lon?: string;
+};
+
 type FallbackPlaceSeed = {
   name: string;
   category: string;
@@ -329,6 +335,43 @@ function buildFallbackPlace(place: FallbackPlaceSeed, origin: OriginLocation): N
   };
 }
 
+async function geocodeLocationQuery(locationQuery: string): Promise<OriginLocation | null> {
+  const trimmed = locationQuery.trim();
+  if (!trimmed) return null;
+
+  const url = new URL('https://nominatim.openstreetmap.org/search');
+  url.searchParams.set('format', 'jsonv2');
+  url.searchParams.set('limit', '1');
+  url.searchParams.set('q', trimmed);
+
+  const response = await fetch(url, {
+    headers: {
+      accept: 'application/json',
+      'user-agent': 'Trek/1.0',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Geocoding failed with status ${response.status}: ${response.statusText}`);
+  }
+
+  const data = (await response.json()) as GeocodeResult[];
+  const best = data[0];
+  if (!best) return null;
+  const lat = best?.lat ? Number(best.lat) : NaN;
+  const lng = best?.lon ? Number(best.lon) : NaN;
+
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    return null;
+  }
+
+  return {
+    displayName: best.display_name ?? trimmed,
+    lat,
+    lng,
+  };
+}
+
 function extractPriceTier(price: FoursquarePlace['price']): number | null {
   if (typeof price === 'number' && Number.isFinite(price)) {
     return price;
@@ -440,11 +483,25 @@ async function foursquareFetchJson<T>(path: string, params: Record<string, strin
 }
 
 async function resolveOrigin(locationQuery: string, originCoords?: OriginCoords): Promise<OriginLocation> {
-  if (
-    originCoords &&
-    Number.isFinite(originCoords.latitude) &&
-    Number.isFinite(originCoords.longitude)
-  ) {
+  const trimmed = locationQuery.trim();
+  const wantsCurrentLocation = !trimmed || /^(current location|near me|my location)$/i.test(trimmed);
+
+  if (wantsCurrentLocation && originCoords && Number.isFinite(originCoords.latitude) && Number.isFinite(originCoords.longitude)) {
+    return {
+      displayName: 'Current location',
+      lat: originCoords.latitude,
+      lng: originCoords.longitude,
+    };
+  }
+
+  if (!wantsCurrentLocation) {
+    const geocoded = await geocodeLocationQuery(trimmed);
+    if (geocoded) {
+      return geocoded;
+    }
+  }
+
+  if (originCoords && Number.isFinite(originCoords.latitude) && Number.isFinite(originCoords.longitude)) {
     return {
       displayName: 'Current location',
       lat: originCoords.latitude,
@@ -453,7 +510,7 @@ async function resolveOrigin(locationQuery: string, originCoords?: OriginCoords)
   }
 
   return {
-    displayName: locationQuery || DEFAULT_LOCATION_QUERY,
+    displayName: trimmed || DEFAULT_LOCATION_QUERY,
     lat: DEFAULT_ORIGIN.lat,
     lng: DEFAULT_ORIGIN.lng,
   };
