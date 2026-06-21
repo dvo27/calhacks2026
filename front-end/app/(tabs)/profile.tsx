@@ -1,11 +1,11 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, useCallback } from 'react';
 import {
   View, Text, TouchableOpacity, StyleSheet,
   ScrollView, ActivityIndicator, Modal, TextInput,
   KeyboardAvoidingView, Platform, Share, Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Colors } from '@/constants/colors';
 import { supabase } from '@/lib/supabase';
 import RouteMap from '@/components/map/RouteMap';
@@ -83,11 +83,19 @@ export default function ProfileScreen() {
     supabase.auth.getSession().then(({ data: s }) => {
       setUserEmail(s.session?.user?.email ?? '');
     });
-    fetchMe().then((d) => {
-      setData(d);
-      setLoading(false);
-    });
   }, []);
+
+  const loadProfile = useCallback(async () => {
+    const d = await fetchMe();
+    setData(d);
+    setLoading(false);
+  }, []);
+
+  useFocusEffect(
+    useCallback(() => {
+      loadProfile();
+    }, [loadProfile])
+  );
 
   function openEdit() {
     setEditUsername(data?.profile.username ?? '');

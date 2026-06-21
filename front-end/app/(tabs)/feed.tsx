@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Colors } from '@/constants/colors';
 import { useTrekStore } from '@/lib/store';
-import { getFeed, type TripSummary } from '@/lib/api';
+import { getFeed, getMyProfile, type TripSummary } from '@/lib/api';
 import TripCard from '@/components/feed/TripCard';
 
 export default function FeedScreen() {
@@ -16,6 +16,7 @@ export default function FeedScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [avatarInitial, setAvatarInitial] = useState('?');
 
   const load = useCallback(async (mode: 'initial' | 'refresh') => {
     if (mode === 'refresh') setRefreshing(true);
@@ -32,10 +33,15 @@ export default function FeedScreen() {
     }
   }, []);
 
-  // Refetch each time the tab gains focus so newly shared trips appear.
   useFocusEffect(
     useCallback(() => {
       load('initial');
+      getMyProfile()
+        .then((p: any) => {
+          const name = p?.profile?.username ?? p?.profile?.id ?? '';
+          setAvatarInitial(name[0]?.toUpperCase() ?? '?');
+        })
+        .catch(() => {});
     }, [load])
   );
 
@@ -50,7 +56,7 @@ export default function FeedScreen() {
         <Text style={styles.logo}>trek</Text>
         <TouchableOpacity style={styles.avatarBtn} onPress={() => router.push('/profile')}>
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>P</Text>
+            <Text style={styles.avatarText}>{avatarInitial}</Text>
           </View>
         </TouchableOpacity>
       </View>

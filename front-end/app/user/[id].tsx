@@ -48,11 +48,13 @@ export default function UserProfileScreen() {
     setFollowBusy(true);
     const wasFollowing = following;
     setFollowing(!wasFollowing);
+    setStats((s) => s ? { ...s, followers: Math.max(0, s.followers + (wasFollowing ? -1 : 1)) } : s);
     try {
       if (wasFollowing) await unfollowUser(id);
       else await followUser(id);
     } catch {
       setFollowing(wasFollowing);
+      setStats((s) => s ? { ...s, followers: Math.max(0, s.followers + (wasFollowing ? 1 : -1)) } : s);
     } finally {
       setFollowBusy(false);
     }
