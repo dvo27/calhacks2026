@@ -1,6 +1,27 @@
 import { supabase } from './supabase'; // your existing Supabase client setup
+import Constants from 'expo-constants';
 
-const API_BASE_URL = (process.env.EXPO_PUBLIC_API_URL ?? 'http://localhost:5001').trim().replace(/\/+$/, '');
+function getApiBaseUrl() {
+  const configuredUrl = process.env.EXPO_PUBLIC_API_URL?.trim();
+  if (configuredUrl) {
+    return configuredUrl.replace(/\/+$/, '');
+  }
+
+  const hostUri = Constants.expoConfig?.hostUri ?? Constants.linkingUri ?? '';
+  const host = hostUri.replace(/^.*?:\/\//, '').replace(/\/.*$/, '');
+
+  if (host.includes(':')) {
+    return `http://${host.split(':')[0]}:5001`;
+  }
+
+  if (host) {
+    return `http://${host}:5001`;
+  }
+
+  return 'http://localhost:5001';
+}
+
+const API_BASE_URL = getApiBaseUrl();
 
 async function getAuthHeader() {
   const { data } = await supabase.auth.getSession();
