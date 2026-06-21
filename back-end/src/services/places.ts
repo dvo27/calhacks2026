@@ -1,7 +1,24 @@
+import { getBackendEnv } from '../config/env.js';
+
 type OriginLocation = {
   displayName: string;
   lat: number;
   lng: number;
+};
+
+type OriginCoords = {
+  latitude: number;
+  longitude: number;
+};
+
+type FallbackPlaceSeed = {
+  name: string;
+  category: string;
+  subcategory: string | null;
+  displayAddress: string | null;
+  lat: number;
+  lng: number;
+  tags: string[];
 };
 
 export type NearbyPlace = {
@@ -18,11 +35,187 @@ export type NearbyPlace = {
   openingHours: string | null;
   website: string | null;
   phone: string | null;
-  source: 'openstreetmap';
+  source: 'azure-maps' | 'fallback';
 };
 
-const NOMINATIM_SEARCH_ENDPOINT = 'https://nominatim.openstreetmap.org/search';
-const OVERPASS_ENDPOINT = 'https://overpass-api.de/api/interpreter';
+const DEFAULT_LOCATION_QUERY = 'Los Angeles, CA';
+const DEFAULT_ORIGIN: OriginLocation = {
+  displayName: 'Los Angeles, CA',
+  lat: 34.0522,
+  lng: -118.2437,
+};
+
+const AZURE_MAPS_BASE_URL = (getBackendEnv('AZURE_MAPS_BASE_URL') ?? 'https://atlas.microsoft.com').trim().replace(/\/+$/, '');
+const AZURE_MAPS_KEY = getBackendEnv('AZURE_MAPS_KEY', 'AZURE_MAPS_SUBSCRIPTION_KEY');
+const AZURE_MAPS_API_VERSION = getBackendEnv('AZURE_MAPS_API_VERSION') ?? '2026-01-01';
+const AZURE_MAPS_LANGUAGE = getBackendEnv('AZURE_MAPS_LANGUAGE') ?? 'en-US';
+
+const FALLBACK_PLACES: FallbackPlaceSeed[] = [
+  {
+    name: 'The Broad',
+    category: 'attractions',
+    subcategory: 'museum',
+    displayAddress: 'DTLA · 221 S Grand Ave',
+    lat: 34.0544,
+    lng: -118.2509,
+    tags: ['art', 'museum'],
+  },
+  {
+    name: 'Grand Central Market',
+    category: 'food',
+    subcategory: 'market',
+    displayAddress: 'DTLA · 317 S Broadway',
+    lat: 34.0506,
+    lng: -118.2482,
+    tags: ['food', 'market'],
+  },
+  {
+    name: 'LACMA',
+    category: 'attractions',
+    subcategory: 'museum',
+    displayAddress: 'Mid-Wilshire · 5905 Wilshire Blvd',
+    lat: 34.0638,
+    lng: -118.3593,
+    tags: ['art', 'museum'],
+  },
+  {
+    name: 'The Grove',
+    category: 'shopping',
+    subcategory: 'mall',
+    displayAddress: 'Fairfax · 189 The Grove Dr',
+    lat: 34.0722,
+    lng: -118.3570,
+    tags: ['shopping', 'retail'],
+  },
+  {
+    name: 'Griffith Observatory',
+    category: 'attractions',
+    subcategory: 'viewpoint',
+    displayAddress: 'Los Feliz · 2800 E Observatory Rd',
+    lat: 34.1184,
+    lng: -118.3004,
+    tags: ['views', 'hiking'],
+  },
+  {
+    name: 'Sqirl',
+    category: 'food',
+    subcategory: 'cafe',
+    displayAddress: 'Silver Lake · 720 N Virgil Ave',
+    lat: 34.0866,
+    lng: -118.2900,
+    tags: ['coffee', 'brunch'],
+  },
+  {
+    name: 'Erewhon Market',
+    category: 'food',
+    subcategory: 'grocery',
+    displayAddress: 'Silver Lake · 711 Sunset Blvd',
+    lat: 34.0778,
+    lng: -118.2754,
+    tags: ['grocery', 'market'],
+  },
+  {
+    name: 'The Abbey',
+    category: 'nightlife',
+    subcategory: 'bar',
+    displayAddress: 'WeHo · 692 N Robertson Blvd',
+    lat: 34.0840,
+    lng: -118.3827,
+    tags: ['bar', 'nightlife'],
+  },
+  {
+    name: 'Runyon Canyon',
+    category: 'attractions',
+    subcategory: 'trail',
+    displayAddress: 'Hollywood · 2000 N Fuller Ave',
+    lat: 34.1059,
+    lng: -118.3498,
+    tags: ['hike', 'outdoors'],
+  },
+  {
+    name: 'Melrose Trading Post',
+    category: 'shopping',
+    subcategory: 'market',
+    displayAddress: 'Fairfax · 7850 Melrose Ave',
+    lat: 34.0842,
+    lng: -118.3538,
+    tags: ['market', 'vintage'],
+  },
+];
+
+const SEARCH_STOP_WORDS = new Set([
+  'near',
+  'me',
+  'in',
+  'around',
+  'the',
+  'a',
+  'an',
+  'for',
+  'of',
+  'to',
+  'my',
+  'best',
+  'good',
+]);
+
+type AzureMapsGeometry = {
+  coordinates?: number[];
+};
+
+type AzureMapsAddress = {
+  formattedAddress?: string;
+  freeformAddress?: string;
+};
+
+type AzureMapsPoi = {
+  name?: string;
+  categories?: string[];
+  phone?: string;
+  url?: string;
+};
+
+type AzureMapsGeocodeFeature = {
+  geometry?: AzureMapsGeometry;
+  properties?: {
+    address?: AzureMapsAddress;
+  };
+};
+
+type AzureMapsSearchResult = {
+  geometry?: AzureMapsGeometry;
+  position?: { lat?: number; lon?: number };
+  poi?: AzureMapsPoi;
+  address?: AzureMapsAddress;
+  dist?: number;
+  entityType?: string;
+  type?: string;
+  openingHours?: unknown;
+};
+
+type AzureMapsGeocodeResponse = {
+  features?: AzureMapsGeocodeFeature[];
+};
+
+type AzureMapsNearbyResponse = {
+  results?: AzureMapsSearchResult[];
+  features?: AzureMapsSearchResult[];
+};
+
+type AzureMapsAutocompleteFeature = {
+  geometry?: AzureMapsGeometry;
+  properties?: {
+    name?: string;
+    type?: string;
+    typeGroup?: string;
+    address?: AzureMapsAddress;
+    poi?: AzureMapsPoi;
+  };
+};
+
+type AzureMapsAutocompleteResponse = {
+  features?: AzureMapsAutocompleteFeature[];
+};
 
 function toFiniteNumber(value: unknown) {
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -41,16 +234,8 @@ function haversineDistanceMeters(lat1: number, lng1: number, lat2: number, lng2:
 }
 
 function buildAddress(tags: Record<string, string | undefined>) {
-  const lineParts = [
-    tags['addr:housenumber'],
-    tags['addr:street'],
-  ].filter(Boolean);
-
-  const cityStateParts = [
-    tags['addr:city'],
-    tags['addr:state'],
-    tags['addr:postcode'],
-  ].filter(Boolean);
+  const lineParts = [tags['addr:housenumber'], tags['addr:street']].filter(Boolean);
+  const cityStateParts = [tags['addr:city'], tags['addr:state'], tags['addr:postcode']].filter(Boolean);
 
   const parts = [
     lineParts.length ? lineParts.join(' ') : null,
@@ -75,142 +260,316 @@ function buildCategory(tags: Record<string, string | undefined>) {
   return 'place';
 }
 
-async function geocodeLocation(locationQuery: string): Promise<OriginLocation> {
-  const url = new URL(NOMINATIM_SEARCH_ENDPOINT);
-  url.searchParams.set('format', 'jsonv2');
-  url.searchParams.set('limit', '1');
-  url.searchParams.set('addressdetails', '1');
-  url.searchParams.set('q', locationQuery);
+function normalizeSearchTerms(searchQuery: string) {
+  return searchQuery
+    .toLowerCase()
+    .split(/[^a-z0-9]+/i)
+    .map((term) => term.trim())
+    .filter((term) => term.length >= 2 && !SEARCH_STOP_WORDS.has(term));
+}
 
-  const response = await fetch(url, {
-    headers: {
-      'user-agent': 'calhacks2026-backend/1.0',
-      accept: 'application/json',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Nominatim search failed with status ${response.status}`);
+function scorePlace(place: NearbyPlace, searchTerms: string[]) {
+  if (!searchTerms.length) {
+    return 0;
   }
 
-  const data = (await response.json()) as Array<{
-    display_name?: string;
-    lat?: string;
-    lon?: string;
-  }>;
+  const haystack = [place.name, place.category, place.subcategory ?? '', place.displayAddress ?? '', ...place.tags]
+    .join(' ')
+    .toLowerCase();
 
-  const firstResult = data[0];
-  const lat = firstResult?.lat ? Number(firstResult.lat) : null;
-  const lng = firstResult?.lon ? Number(firstResult.lon) : null;
+  return searchTerms.reduce((score, term) => {
+    if (place.name.toLowerCase().includes(term)) return score + 4;
+    if (place.category.toLowerCase().includes(term)) return score + 3;
+    if (place.subcategory?.toLowerCase().includes(term)) return score + 2;
+    if (place.tags.some((tag) => tag.toLowerCase().includes(term))) return score + 1;
+    if (haystack.includes(term)) return score + 1;
+    return score;
+  }, 0);
+}
 
-  if (!firstResult?.display_name || lat === null || lng === null || Number.isNaN(lat) || Number.isNaN(lng)) {
-    throw new Error(`No geocoding result found for "${locationQuery}"`);
+function scoreFallbackPlace(place: FallbackPlaceSeed, searchTerms: string[]) {
+  if (!searchTerms.length) {
+    return 0;
   }
 
+  const haystack = [place.name, place.category, place.subcategory ?? '', place.displayAddress ?? '', ...place.tags]
+    .join(' ')
+    .toLowerCase();
+
+  return searchTerms.reduce((score, term) => (haystack.includes(term) ? score + 1 : score), 0);
+}
+
+function stableNumericId(seed: string) {
+  let hash = 0;
+  for (let index = 0; index < seed.length; index += 1) {
+    hash = (hash * 31 + seed.charCodeAt(index)) | 0;
+  }
+
+  return hash >>> 0;
+}
+
+function extractCoordinates(value: AzureMapsGeometry | undefined): { lat: number; lng: number } | null {
+  const coordinates = value?.coordinates;
+  if (!coordinates || coordinates.length < 2) {
+    return null;
+  }
+
+  const lng = toFiniteNumber(coordinates[0]);
+  const lat = toFiniteNumber(coordinates[1]);
+
+  if (lat === null || lng === null) {
+    return null;
+  }
+
+  return { lat, lng };
+}
+
+function radiusToBbox(origin: OriginLocation, radiusMeters: number) {
+  const latDelta = radiusMeters / 111_320;
+  const lngDelta = radiusMeters / (111_320 * Math.max(Math.cos((origin.lat * Math.PI) / 180), 0.2));
+
+  return `${origin.lng - lngDelta},${origin.lat - latDelta},${origin.lng + lngDelta},${origin.lat + latDelta}`;
+}
+
+function buildFallbackPlace(place: FallbackPlaceSeed, origin: OriginLocation): NearbyPlace {
   return {
-    displayName: firstResult.display_name,
-    lat,
-    lng,
+    osmType: 'node',
+    osmId: stableNumericId(`${place.name}:${place.lat}:${place.lng}`),
+    name: place.name,
+    category: place.category,
+    subcategory: place.subcategory,
+    displayAddress: place.displayAddress,
+    lat: place.lat,
+    lng: place.lng,
+    distanceMeters: haversineDistanceMeters(origin.lat, origin.lng, place.lat, place.lng),
+    tags: place.tags,
+    openingHours: null,
+    website: null,
+    phone: null,
+    source: 'fallback',
   };
 }
 
-async function fetchNearbyPlaces(origin: OriginLocation, radiusMeters: number, limit: number): Promise<NearbyPlace[]> {
-  const query = `
-[out:json][timeout:25];
-(
-  node(around:${radiusMeters},${origin.lat},${origin.lng})["amenity"];
-  node(around:${radiusMeters},${origin.lat},${origin.lng})["tourism"];
-  node(around:${radiusMeters},${origin.lat},${origin.lng})["leisure"];
-  node(around:${radiusMeters},${origin.lat},${origin.lng})["shop"];
-  node(around:${radiusMeters},${origin.lat},${origin.lng})["historic"];
-  node(around:${radiusMeters},${origin.lat},${origin.lng})["natural"];
-  way(around:${radiusMeters},${origin.lat},${origin.lng})["amenity"];
-  way(around:${radiusMeters},${origin.lat},${origin.lng})["tourism"];
-  way(around:${radiusMeters},${origin.lat},${origin.lng})["leisure"];
-  way(around:${radiusMeters},${origin.lat},${origin.lng})["shop"];
-  way(around:${radiusMeters},${origin.lat},${origin.lng})["historic"];
-  way(around:${radiusMeters},${origin.lat},${origin.lng})["natural"];
-  relation(around:${radiusMeters},${origin.lat},${origin.lng})["amenity"];
-  relation(around:${radiusMeters},${origin.lat},${origin.lng})["tourism"];
-  relation(around:${radiusMeters},${origin.lat},${origin.lng})["leisure"];
-  relation(around:${radiusMeters},${origin.lat},${origin.lng})["shop"];
-  relation(around:${radiusMeters},${origin.lat},${origin.lng})["historic"];
-  relation(around:${radiusMeters},${origin.lat},${origin.lng})["natural"];
-);
-out center tags;
-`;
+function buildAzurePlace(result: AzureMapsSearchResult, origin: OriginLocation): NearbyPlace | null {
+  const coordinates = extractCoordinates(result.geometry) ?? (
+    typeof result.position?.lat === 'number' && typeof result.position?.lon === 'number'
+      ? { lat: result.position.lat, lng: result.position.lon }
+      : null
+  );
 
-  const response = await fetch(OVERPASS_ENDPOINT, {
-    method: 'POST',
+  if (!coordinates) {
+    return null;
+  }
+
+  const categories = result.poi?.categories ?? [];
+  const name = result.poi?.name ?? result.address?.freeformAddress ?? result.entityType ?? 'Place';
+  const displayAddress = result.address?.freeformAddress ?? null;
+  const category = categories[0] ?? result.entityType ?? result.type ?? 'place';
+  const subcategory = categories[1] ?? null;
+
+  return {
+    osmType: 'node',
+    osmId: stableNumericId(`${name}:${coordinates.lat}:${coordinates.lng}`),
+    name,
+    category,
+    subcategory,
+    displayAddress,
+    lat: coordinates.lat,
+    lng: coordinates.lng,
+    distanceMeters: typeof result.dist === 'number' ? result.dist : haversineDistanceMeters(origin.lat, origin.lng, coordinates.lat, coordinates.lng),
+    tags: [
+      ...categories,
+      result.entityType,
+      result.type,
+      displayAddress,
+    ]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .slice(0, 12),
+    openingHours: null,
+    website: result.poi?.url ?? null,
+    phone: result.poi?.phone ?? null,
+    source: 'azure-maps',
+  };
+}
+
+function buildAutocompletePlace(feature: AzureMapsAutocompleteFeature, origin: OriginLocation): NearbyPlace | null {
+  const coordinates = extractCoordinates(feature.geometry);
+  if (!coordinates) {
+    return null;
+  }
+
+  const properties = feature.properties ?? {};
+  const poi = properties.poi ?? {};
+  const categories = poi.categories ?? [];
+  const name = poi.name ?? properties.name ?? properties.address?.formattedAddress ?? 'Place';
+  const category = categories[0] ?? properties.typeGroup ?? properties.type ?? 'place';
+  const subcategory = categories[1] ?? null;
+  const displayAddress = properties.address?.formattedAddress ?? properties.address?.freeformAddress ?? null;
+
+  return {
+    osmType: 'node',
+    osmId: stableNumericId(`${name}:${coordinates.lat}:${coordinates.lng}`),
+    name,
+    category,
+    subcategory,
+    displayAddress,
+    lat: coordinates.lat,
+    lng: coordinates.lng,
+    distanceMeters: haversineDistanceMeters(origin.lat, origin.lng, coordinates.lat, coordinates.lng),
+    tags: [properties.typeGroup, properties.type, ...categories, displayAddress]
+      .filter((value): value is string => typeof value === 'string' && value.length > 0)
+      .slice(0, 12),
+    openingHours: null,
+    website: poi.url ?? null,
+    phone: poi.phone ?? null,
+    source: 'azure-maps',
+  };
+}
+
+async function azureMapsFetchJson<T>(path: string, params: Record<string, string | number | undefined>) {
+  if (!AZURE_MAPS_KEY) {
+    throw new Error('AZURE_MAPS_KEY is not configured.');
+  }
+
+  const url = new URL(path, `${AZURE_MAPS_BASE_URL}/`);
+  url.searchParams.set('api-version', AZURE_MAPS_API_VERSION);
+  url.searchParams.set('subscription-key', AZURE_MAPS_KEY);
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value));
+    }
+  }
+
+  const response = await fetch(url, {
     headers: {
-      'content-type': 'application/x-www-form-urlencoded',
-      'user-agent': 'calhacks2026-backend/1.0',
       accept: 'application/json',
+      'Accept-Language': AZURE_MAPS_LANGUAGE,
     },
-    body: new URLSearchParams({ data: query }),
   });
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => '');
-    throw new Error(`Overpass query failed with status ${response.status}: ${errorText || response.statusText}`);
+    throw new Error(`Azure Maps request failed with status ${response.status}: ${errorText || response.statusText}`);
   }
 
-  const data = (await response.json()) as {
-    elements?: Array<{
-      type: 'node' | 'way' | 'relation';
-      id: number;
-      lat?: number;
-      lon?: number;
-      center?: { lat?: number; lon?: number };
-      tags?: Record<string, string | undefined>;
-    }>;
-  };
-
-  const places = (data.elements ?? [])
-    .map((element) => {
-      const tags = element.tags ?? {};
-      const lat = element.lat ?? element.center?.lat;
-      const lng = element.lon ?? element.center?.lon;
-
-      if (lat === undefined || lng === undefined) {
-        return null;
-      }
-
-      const name = buildName(tags, `${buildCategory(tags)} ${element.id}`);
-      return {
-        osmType: element.type,
-        osmId: element.id,
-        name,
-        category: buildCategory(tags),
-        subcategory: tags.tourism ?? tags.amenity ?? tags.leisure ?? tags.shop ?? tags.historic ?? tags.natural ?? null,
-        displayAddress: buildAddress(tags),
-        lat,
-        lng,
-        distanceMeters: haversineDistanceMeters(origin.lat, origin.lng, lat, lng),
-        tags: Object.entries(tags)
-          .filter(([, value]) => typeof value === 'string')
-          .slice(0, 12)
-          .map(([key, value]) => `${key}=${value}`),
-        openingHours: tags.opening_hours ?? null,
-        website: tags.website ?? tags['contact:website'] ?? null,
-        phone: tags.phone ?? tags['contact:phone'] ?? null,
-        source: 'openstreetmap' as const,
-      } satisfies NearbyPlace;
-    })
-    .filter((place): place is NearbyPlace => Boolean(place))
-    .sort((left, right) => left.distanceMeters - right.distanceMeters)
-    .slice(0, Math.max(limit, 1));
-
-  return places;
+  return response.json() as Promise<T>;
 }
 
-export async function suggestPlacesForLocation(locationQuery: string, radiusMeters = 3000, limit = 20) {
-  const origin = await geocodeLocation(locationQuery);
-  const places = await fetchNearbyPlaces(origin, radiusMeters, limit);
+async function geocodeLocation(locationQuery: string): Promise<OriginLocation> {
+  const data = await azureMapsFetchJson<AzureMapsGeocodeResponse>('/geocode', {
+    query: locationQuery,
+    top: 1,
+    view: 'Auto',
+  });
+
+  const firstResult = data.features?.[0];
+  const coordinates = extractCoordinates(firstResult?.geometry);
+  const displayName = firstResult?.properties?.address?.formattedAddress
+    ?? firstResult?.properties?.address?.freeformAddress
+    ?? locationQuery;
+
+  if (!coordinates) {
+    throw new Error(`No geocoding result found for "${locationQuery}"`);
+  }
+
+  return {
+    displayName,
+    lat: coordinates.lat,
+    lng: coordinates.lng,
+  };
+}
+
+async function resolveOrigin(locationQuery: string, originCoords?: OriginCoords): Promise<OriginLocation> {
+  if (
+    originCoords &&
+    Number.isFinite(originCoords.latitude) &&
+    Number.isFinite(originCoords.longitude)
+  ) {
+    return {
+      displayName: locationQuery,
+      lat: originCoords.latitude,
+      lng: originCoords.longitude,
+    };
+  }
+
+  try {
+    return await geocodeLocation(locationQuery);
+  } catch (error) {
+    console.warn(`Location geocoding failed for "${locationQuery}", using fallback origin:`, error);
+    return DEFAULT_ORIGIN;
+  }
+}
+
+async function fetchAzurePlaces(origin: OriginLocation, radiusMeters: number, limit: number, searchQuery: string) {
+  const query = searchQuery.trim() || 'place';
+  const data = await azureMapsFetchJson<AzureMapsAutocompleteResponse>('/geocode:autocomplete', {
+    query,
+    coordinates: `${origin.lng},${origin.lat}`,
+    bbox: radiusToBbox(origin, radiusMeters),
+    resultTypeGroups: 'Place',
+    top: limit,
+    view: 'Auto',
+  });
+
+  const rawResults = data.features ?? [];
+  return rawResults
+    .map((feature) => buildAutocompletePlace(feature, origin))
+    .filter((place): place is NearbyPlace => Boolean(place));
+}
+
+function buildFallbackPlaces(origin: OriginLocation, radiusMeters: number, limit: number, searchQuery: string) {
+  const searchTerms = normalizeSearchTerms(searchQuery);
+
+  return FALLBACK_PLACES
+    .map((place) => ({
+      place: buildFallbackPlace(place, origin),
+      score: scoreFallbackPlace(place, searchTerms),
+    }))
+    .filter(({ place }) => place.distanceMeters <= radiusMeters)
+    .sort((left, right) => {
+      if (searchTerms.length) {
+        return right.score - left.score || left.place.distanceMeters - right.place.distanceMeters;
+      }
+
+      return left.place.distanceMeters - right.place.distanceMeters;
+    })
+    .map(({ place }) => place)
+    .slice(0, Math.max(limit, 1));
+}
+
+export async function suggestPlacesForLocation(
+  locationQuery: string,
+  searchQuery = '',
+  originCoords?: OriginCoords,
+  radiusMeters = 3000,
+  limit = 20
+) {
+  const origin = await resolveOrigin(locationQuery.trim() || DEFAULT_LOCATION_QUERY, originCoords);
+  const trimmedSearchQuery = searchQuery.trim();
+  const searchTerms = normalizeSearchTerms(searchQuery);
+  const topLimit = Math.max(limit, 1) * 3;
+
+  let places: NearbyPlace[] = [];
+
+  try {
+    places = await fetchAzurePlaces(origin, radiusMeters, topLimit, trimmedSearchQuery);
+  } catch (error) {
+    console.warn(`Azure Maps place lookup failed for "${locationQuery}", using fallback places:`, error);
+    places = buildFallbackPlaces(origin, radiusMeters, topLimit, trimmedSearchQuery);
+  }
+
+  const rankedPlaces = searchTerms.length
+    ? places
+        .map((place) => ({ place, score: scorePlace(place, searchTerms) }))
+        .filter(({ score }) => score > 0)
+        .sort((left, right) => right.score - left.score || left.place.distanceMeters - right.place.distanceMeters)
+        .map(({ place }) => place)
+    : places;
 
   return {
     origin,
     radiusMeters,
-    places,
+    places: (rankedPlaces.length ? rankedPlaces : places).slice(0, Math.max(limit, 1)),
   };
 }

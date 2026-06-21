@@ -254,7 +254,7 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
 
   router.post('/place-suggestions', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
-      const { locationQuery, radiusMeters, limit } = req.body ?? {};
+      const { locationQuery, searchQuery, originCoords, radiusMeters, limit } = req.body ?? {};
 
       if (!locationQuery || typeof locationQuery !== 'string') {
         res.status(400).json({ error: 'locationQuery is required to fetch nearby places.' });
@@ -266,6 +266,8 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
 
       const data = await suggestPlacesForLocation(
         locationQuery,
+        typeof searchQuery === 'string' ? searchQuery : '',
+        originCoords && typeof originCoords === 'object' ? originCoords : undefined,
         Number.isFinite(parsedRadius) && parsedRadius > 0 ? parsedRadius : 3000,
         Number.isFinite(parsedLimit) && parsedLimit > 0 ? parsedLimit : 20
       );
