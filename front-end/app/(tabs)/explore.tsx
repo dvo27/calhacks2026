@@ -23,6 +23,8 @@ import {
   searchUsers,
   followUser,
   unfollowUser,
+  likeTrip,
+  unlikeTrip,
   type PlaceSuggestion,
   type ExploreTrip,
   type PublicUser,
@@ -87,15 +89,29 @@ function PlaceCard({ place }: { place: PlaceSuggestion }) {
   );
 }
 
-function TripCard({ trip, onPress }: { trip: ExploreTrip; onPress: () => void }) {
+function TripCard({ trip, onPress, onAuthorPress }: { trip: ExploreTrip; onPress: () => void; onAuthorPress?: () => void }) {
   const author = trip.user;
   const initial = author?.username?.[0]?.toUpperCase() ?? '?';
   const activityCount = trip.activities?.length ?? 0;
-  const totalEngagement = trip.engagement.likes + trip.engagement.comments + trip.engagement.shares;
+  const [liked, setLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(trip.engagement.likes);
+
+  async function handleLike() {
+    const wasLiked = liked;
+    setLiked(!wasLiked);
+    setLikeCount((c) => wasLiked ? c - 1 : c + 1);
+    try {
+      if (wasLiked) await unlikeTrip(trip.id);
+      else await likeTrip(trip.id);
+    } catch {
+      setLiked(wasLiked);
+      setLikeCount((c) => wasLiked ? c + 1 : c - 1);
+    }
+  }
 
   return (
-    <TouchableOpacity style={styles.tripCard} onPress={onPress} activeOpacity={0.9}>
-      <View style={styles.tripTop}>
+    <View style={styles.tripCard}>
+      <TouchableOpacity style={styles.tripTop} onPress={onAuthorPress ?? onPress} activeOpacity={0.7}>
         <View style={styles.tripAvatar}>
           <Text style={styles.tripAvatarText}>{initial}</Text>
         </View>
@@ -109,46 +125,50 @@ function TripCard({ trip, onPress }: { trip: ExploreTrip; onPress: () => void })
             {timeAgo(trip.created_at)}
           </Text>
         </View>
-      </View>
+      </TouchableOpacity>
 
-      <View style={styles.tripStats}>
-        <View style={styles.tripStat}>
-          <Text style={styles.tripStatValue}>{formatDriveTime(trip.total_drive_time_minutes)}</Text>
-          <Text style={styles.tripStatLabel}>drive</Text>
+      <TouchableOpacity onPress={onPress} activeOpacity={0.9}>
+        <View style={styles.tripStats}>
+          <View style={styles.tripStat}>
+            <Text style={styles.tripStatValue}>{formatDriveTime(trip.total_drive_time_minutes)}</Text>
+            <Text style={styles.tripStatLabel}>drive</Text>
+          </View>
+          <View style={styles.tripStat}>
+            <Text style={styles.tripStatValue}>${trip.total_budget ?? 0}</Text>
+            <Text style={styles.tripStatLabel}>budget</Text>
+          </View>
+          <View style={styles.tripStat}>
+            <Text style={styles.tripStatValue}>${trip.total_gas_cost ?? 0}</Text>
+            <Text style={styles.tripStatLabel}>gas</Text>
+          </View>
+          <View style={styles.tripStat}>
+            <Text style={styles.tripStatValue}>{trip.total_distance_miles ?? 0}mi</Text>
+            <Text style={styles.tripStatLabel}>miles</Text>
+          </View>
         </View>
-        <View style={styles.tripStat}>
-          <Text style={styles.tripStatValue}>${trip.total_budget ?? 0}</Text>
-          <Text style={styles.tripStatLabel}>budget</Text>
-        </View>
-        <View style={styles.tripStat}>
-          <Text style={styles.tripStatValue}>${trip.total_gas_cost ?? 0}</Text>
-          <Text style={styles.tripStatLabel}>gas</Text>
-        </View>
-        <View style={styles.tripStat}>
-          <Text style={styles.tripStatValue}>{trip.total_distance_miles ?? 0}mi</Text>
-          <Text style={styles.tripStatLabel}>miles</Text>
-        </View>
-      </View>
 
-      {trip.activities.length > 0 && (
-        <View style={styles.tripStops}>
-          {trip.activities.slice(0, 3).map((act, i) => (
-            <View key={act.id} style={styles.tripStopChip}>
-              <Text style={styles.tripStopText}>{i + 1}. {act.title}</Text>
-            </View>
-          ))}
-          {trip.activities.length > 3 && (
-            <Text style={styles.tripMoreStops}>+{trip.activities.length - 3} more</Text>
-          )}
-        </View>
-      )}
+        {trip.activities.length > 0 && (
+          <View style={styles.tripStops}>
+            {trip.activities.slice(0, 3).map((act, i) => (
+              <View key={act.id} style={styles.tripStopChip}>
+                <Text style={styles.tripStopText}>{i + 1}. {act.title}</Text>
+              </View>
+            ))}
+            {trip.activities.length > 3 && (
+              <Text style={styles.tripMoreStops}>+{trip.activities.length - 3} more</Text>
+            )}
+          </View>
+        )}
+      </TouchableOpacity>
 
       <View style={styles.tripEngagement}>
-        <Text style={styles.engagementText}>{'❤'} {trip.engagement.likes}</Text>
+        <TouchableOpacity style={styles.engagementBtn} onPress={handleLike} activeOpacity={0.75}>
+          <Text style={[styles.engagementText, liked && styles.engagementLiked]}>{'♥'} {likeCount}</Text>
+        </TouchableOpacity>
         <Text style={styles.engagementText}>{'\u{1F4AC}'} {trip.engagement.comments}</Text>
-        <Text style={styles.engagementText}>{'\u{1F516}'} {trip.engagement.shares}</Text>
+        <Text style={styles.engagementText}>{'↗'} {trip.engagement.shares}</Text>
       </View>
-    </TouchableOpacity>
+    </View>
   );
 }
 
@@ -395,7 +415,8 @@ export default function ExploreScreen() {
             <TripCard
               key={trip.id}
               trip={trip}
-              onPress={() => router.push(`/post/${trip.id}`)}
+              onPress={() => router.push(`/trip/${trip.id}`)}
+              onAuthorPress={trip.user?.id ? () => router.push(`/user/${trip.user!.id}`) : undefined}
             />
           ))
         )}
@@ -571,10 +592,17 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: Colors.line,
   },
+  engagementBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
   engagementText: {
     fontSize: 13,
     fontWeight: '700',
     color: Colors.ink2,
+  },
+  engagementLiked: {
+    color: Colors.coral,
   },
 
   // Empty states

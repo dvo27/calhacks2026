@@ -78,7 +78,13 @@ export default function FeedScreen() {
           <Text style={styles.empty}>No shared trips yet. Build a day and share it to the feed!</Text>
         ) : (
           trips.map((trip) => (
-            <TripCard key={trip.id} trip={trip} showAuthor onPress={() => router.push(`/trip/${trip.id}`)} />
+            <TripCard
+              key={trip.id}
+              trip={trip}
+              showAuthor
+              onPress={() => router.push(`/trip/${trip.id}`)}
+              onAuthorPress={trip.user?.id ? () => router.push(`/user/${trip.user!.id}`) : undefined}
+            />
           ))
         )}
 

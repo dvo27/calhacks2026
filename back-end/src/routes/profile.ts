@@ -92,6 +92,43 @@ export function createProfileRouter() {
     }
   });
 
+  router.get('/uid/:userId', async (req, res) => {
+    try {
+      const userId = String(req.params.userId ?? '');
+
+      const { data: profile, error } = await supabase
+        .from('users')
+        .select('id, username, avatar_url, created_at')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (error) throw error;
+      if (!profile) {
+        res.status(404).json({ error: 'Profile not found.' });
+        return;
+      }
+
+      const [stats, tripsResult] = await Promise.all([
+        getUserSocialCounts(profile.id),
+        supabase
+          .from('trips')
+          .select('id, title, is_public, created_at, total_budget, total_distance_miles, total_drive_time_minutes, total_gas_cost')
+          .eq('user_id', profile.id)
+          .eq('is_public', true)
+          .order('created_at', { ascending: false }),
+      ]);
+
+      res.status(200).json({
+        profile,
+        stats,
+        trips: tripsResult.data ?? [],
+      });
+    } catch (error) {
+      console.error('Error loading profile by id:', error);
+      res.status(500).json({ error: 'Failed to load profile.' });
+    }
+  });
+
   router.get('/:username', async (req, res) => {
     try {
       const username = String(req.params.username ?? '');

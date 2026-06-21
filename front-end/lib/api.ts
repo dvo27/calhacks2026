@@ -290,7 +290,7 @@ export interface TripSummary {
   activities?: Array<{ id: number; title?: string; description?: string | null; location_coords?: unknown }> | null;
   route_preview_points?: Array<{ id: number; title: string; latitude: number; longitude: number }> | null;
   trip_media?: Array<{ id?: number; s3_url: string; activity_id?: number | null; media_type?: string | null; caption?: string | null; created_at: string }> | null;
-  engagement?: { likes?: number; comments?: number; saves?: number; copies?: number } | null;
+  engagement?: { likes?: number; comments?: number; shares?: number; saves?: number; copies?: number } | null;
 }
 
 export interface TripsResponse {
@@ -412,4 +412,16 @@ export interface ActivityEvent {
 
 export function getActivityFeed() {
   return apiFetch<{ events: ActivityEvent[] }>('/api/activity');
+}
+
+// ---- Public user profile ----
+
+export interface UserStats {
+  followers: number;
+  following: number;
+  trips: number;
+}
+
+export function getUserById(userId: string) {
+  return apiFetch<{ profile: PublicUser; stats: UserStats; trips: TripSummary[] }>(`/api/profile/uid/${userId}`);
 }

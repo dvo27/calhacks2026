@@ -1,12 +1,13 @@
-import { View, Text } from 'react-native';
-import { useLocalSearchParams } from 'expo-router';
+import { useEffect } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 
 export default function PostScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
+  const router = useRouter();
 
-  return (
-    <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center' }}>
-      <Text>Post {id}</Text>
-    </View>
-  );
+  useEffect(() => {
+    if (id) router.replace(`/trip/${id}`);
+  }, [id, router]);
+
+  return null;
 }

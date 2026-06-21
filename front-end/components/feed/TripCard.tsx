@@ -1,11 +1,13 @@
+import { useState } from 'react';
 import { View, Text, Image, TouchableOpacity, StyleSheet, ScrollView, useWindowDimensions, Linking } from 'react-native';
 import { Colors } from '@/constants/colors';
-import type { TripSummary } from '@/lib/api';
+import { likeTrip, unlikeTrip, type TripSummary } from '@/lib/api';
 import TripRouteMap, { TripRoutePoint } from '@/components/map/TripRouteMap';
 
 interface TripCardProps {
   trip: TripSummary;
   onPress?: () => void;
+  onAuthorPress?: () => void;
   showAuthor?: boolean;
   showPrivacy?: boolean;
 }
@@ -84,8 +86,23 @@ function buildGoogleMapsUrl(points: TripRoutePoint[]): string | null {
   return `https://www.google.com/maps/dir/?${query}`;
 }
 
-export default function TripCard({ trip, onPress, showAuthor, showPrivacy }: TripCardProps) {
+export default function TripCard({ trip, onPress, onAuthorPress, showAuthor, showPrivacy }: TripCardProps) {
   const { width: screenWidth } = useWindowDimensions();
+  const [liked, setLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(trip.engagement?.likes ?? 0);
+
+  async function handleLike() {
+    const wasLiked = liked;
+    setLiked(!wasLiked);
+    setLikeCount((c) => wasLiked ? Math.max(0, c - 1) : c + 1);
+    try {
+      if (wasLiked) await unlikeTrip(trip.id);
+      else await likeTrip(trip.id);
+    } catch {
+      setLiked(wasLiked);
+      setLikeCount((c) => wasLiked ? c + 1 : Math.max(0, c - 1));
+    }
+  }
   const routePoints: TripRoutePoint[] = (trip.route_preview_points ?? []).map((point) => ({
     id: point.id,
     name: point.title,
@@ -127,12 +144,17 @@ export default function TripCard({ trip, onPress, showAuthor, showPrivacy }: Tri
   return (
     <View style={styles.card}>
       {showAuthor ? (
-        <View style={styles.authorRow}>
+        <TouchableOpacity
+          style={styles.authorRow}
+          onPress={onAuthorPress}
+          disabled={!onAuthorPress}
+          activeOpacity={onAuthorPress ? 0.7 : 1}
+        >
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>{initial}</Text>
           </View>
           <Text style={styles.authorName}>{author}</Text>
-        </View>
+        </TouchableOpacity>
       ) : null}
 
       <ScrollView
@@ -204,6 +226,18 @@ export default function TripCard({ trip, onPress, showAuthor, showPrivacy }: Tri
           </Text>
         ) : null}
       </TouchableOpacity>
+
+      <View style={styles.socialBar}>
+        <TouchableOpacity style={styles.socialBtn} onPress={handleLike} activeOpacity={0.75}>
+          <Text style={[styles.socialText, liked && styles.socialLiked]}>{'♥'} {likeCount}</Text>
+        </TouchableOpacity>
+        <View style={styles.socialBtn}>
+          <Text style={styles.socialText}>{'\u{1F4AC}'} {trip.engagement?.comments ?? 0}</Text>
+        </View>
+        <View style={styles.socialBtn}>
+          <Text style={styles.socialText}>{'↗'} {trip.engagement?.shares ?? 0}</Text>
+        </View>
+      </View>
     </View>
   );
 }
@@ -264,4 +298,17 @@ const styles = StyleSheet.create({
   },
   copyBtnText: { color: '#fff', fontWeight: '700', fontSize: 12 },
   description: { marginTop: 12, fontSize: 13, lineHeight: 19, color: Colors.ink2 },
+  socialBar: {
+    flexDirection: 'row',
+    borderTopWidth: 1,
+    borderTopColor: Colors.line,
+    marginTop: 4,
+  },
+  socialBtn: {
+    flex: 1,
+    alignItems: 'center',
+    paddingVertical: 10,
+  },
+  socialText: { fontSize: 13, fontWeight: '700', color: Colors.ink2 },
+  socialLiked: { color: Colors.coral },
 });

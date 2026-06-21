@@ -139,18 +139,15 @@ export default function TripDetailScreen() {
   async function handleLike() {
     if (!id || likeBusy) return;
     setLikeBusy(true);
+    const wasLiked = likedByMe;
+    setLikedByMe(!wasLiked);
+    setLikes((c) => wasLiked ? Math.max(0, c - 1) : c + 1);
     try {
-      if (likedByMe) {
-        const res = await unlikeTrip(id);
-        setLikes(res.engagement.likes ?? Math.max(0, likes - 1));
-        setLikedByMe(false);
-      } else {
-        const res = await likeTrip(id);
-        setLikes(res.engagement.likes ?? likes + 1);
-        setLikedByMe(true);
-      }
+      const res = wasLiked ? await unlikeTrip(id) : await likeTrip(id);
+      setLikes(res.engagement.likes ?? (wasLiked ? Math.max(0, likes - 1) : likes + 1));
     } catch {
-      // ignore — optimistic would over-complicate for hackathon
+      setLikedByMe(wasLiked);
+      setLikes((c) => wasLiked ? c + 1 : Math.max(0, c - 1));
     } finally {
       setLikeBusy(false);
     }
@@ -189,7 +186,13 @@ export default function TripDetailScreen() {
 
   async function handleShare() {
     if (!data || !id) return;
-    const stopList = places.map((p, i) => `${i + 1}. ${p.title}${p.locationName ? ` (${p.locationName})` : ''}`).join('\n');
+    const stopList = places.map((p, i) => {
+      let loc = p.locationName;
+      if (!loc && p.coordinates) {
+        loc = `${p.coordinates.latitude.toFixed(5)}, ${p.coordinates.longitude.toFixed(5)}`;
+      }
+      return `${i + 1}. ${p.title}${loc ? ` (${loc})` : ''}`;
+    }).join('\n');
     const msg = [
       `🗺️ ${data.trip.title}`,
       `by @${data.trip.user?.username ?? 'someone'}`,
@@ -228,6 +231,7 @@ export default function TripDetailScreen() {
   }
 
   const authorName = data.trip.user?.username ?? 'Someone';
+  const authorId = data.trip.user?.id;
 
   return (
     <View style={[styles.root, { paddingTop: insets.top }]}>
@@ -236,7 +240,13 @@ export default function TripDetailScreen() {
           <Text style={styles.backIcon}>‹</Text>
         </TouchableOpacity>
         <View style={{ flex: 1 }}>
-          <Text style={styles.kicker}>{authorName}'s day</Text>
+          <TouchableOpacity
+            onPress={authorId ? () => router.push(`/user/${authorId}`) : undefined}
+            disabled={!authorId}
+            activeOpacity={0.7}
+          >
+            <Text style={styles.kicker}>{authorName}'s day</Text>
+          </TouchableOpacity>
           <Text style={styles.title} numberOfLines={1}>{data.trip.title}</Text>
         </View>
       </View>
@@ -307,6 +317,23 @@ export default function TripDetailScreen() {
               ) : null}
 
               {place.description ? <Text style={styles.desc}>{place.description}</Text> : null}
+
+              {place.media && place.media.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  style={{ marginTop: 10 }}
+                  contentContainerStyle={{ gap: 8 }}
+                >
+                  {place.media.map((m) => (
+                    <Image
+                      key={m.id}
+                      source={{ uri: m.url }}
+                      style={styles.placePhoto}
+                    />
+                  ))}
+                </ScrollView>
+              ) : null}
             </View>
           );
         })}
@@ -458,6 +485,7 @@ const styles = StyleSheet.create({
   rating: { marginTop: 10, fontSize: 16, color: Colors.amber, letterSpacing: 2 },
   ratingOff: { color: Colors.line },
   desc: { marginTop: 10, fontSize: 14, color: Colors.ink2, lineHeight: 20 },
+  placePhoto: { width: 140, height: 100, borderRadius: 10, backgroundColor: Colors.line },
 
   emptyTitle: { fontFamily: 'serif', fontWeight: '700', fontSize: 22, color: Colors.ink },
   emptySub: { fontSize: 14, color: Colors.soft, textAlign: 'center' },
