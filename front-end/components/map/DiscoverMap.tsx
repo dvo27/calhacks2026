@@ -76,6 +76,19 @@ export default function DiscoverMap({
     onLongPress(e.nativeEvent.coordinate);
   }
 
+  // Animate to user's GPS location once map is ready and coords arrive.
+  const initialRegionRef = useRef(initialRegion);
+  useEffect(() => {
+    if (!mapReady) return;
+    const prev = initialRegionRef.current;
+    if (prev.latitude === initialRegion.latitude && prev.longitude === initialRegion.longitude) return;
+    initialRegionRef.current = initialRegion;
+    mapRef.current?.animateToRegion(
+      { latitude: initialRegion.latitude, longitude: initialRegion.longitude, latitudeDelta: 0.08, longitudeDelta: 0.08 },
+      400
+    );
+  }, [initialRegion, mapReady]);
+
   // Jump to the searched area when a new search origin resolves.
   useEffect(() => {
     if (!mapReady || !focusPoint) return;

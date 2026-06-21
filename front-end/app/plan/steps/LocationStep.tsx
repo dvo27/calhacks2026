@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   View, Text, TextInput, TouchableOpacity,
   FlatList, StyleSheet, KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
+import * as Location from 'expo-location';
 import { Colors } from '@/constants/colors';
 import { useTrekStore } from '@/lib/store';
 import TagRow from '@/components/discover/TagRow';
@@ -56,6 +57,19 @@ export default function LocationStep() {
   const [priceFilter, setPriceFilter] = useState('all');
   const [pendingCoord, setPendingCoord] = useState<{ latitude: number; longitude: number } | null>(null);
   const [dropVisible, setDropVisible] = useState(false);
+  const [mapRegion, setMapRegion] = useState(DEFAULT_REGION);
+  const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+      setCurrentLocation(coords);
+      setMapRegion(coords);
+    })();
+  }, []);
 
   const addedIds = new Set(stops.map((s) => s.id));
 
@@ -155,7 +169,8 @@ export default function LocationStep() {
         <View style={styles.mapWrap}>
           <DiscoverMap
             stops={mapStops}
-            initialRegion={DEFAULT_REGION}
+            initialRegion={mapRegion}
+            currentLocation={currentLocation}
             onLongPress={handleLongPress}
           />
         </View>

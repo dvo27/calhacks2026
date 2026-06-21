@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import * as Location from 'expo-location';
 import { Colors } from '@/constants/colors';
 import { useTrekStore } from '@/lib/store';
 import { addTripActivity, createTrip, PlaceSuggestion } from '@/lib/api';
@@ -10,7 +11,7 @@ import TagRow from '@/components/discover/TagRow';
 import DiscoverMap, { MapCandidate } from '@/components/map/DiscoverMap';
 import DropPinSheet, { DropPinResult } from '@/components/discover/DropPinSheet';
 
-const DEFAULT_REGION = { latitude: 34.0900, longitude: -118.3617 }; // TODO: geocode store.exploreArea
+const DEFAULT_REGION = { latitude: 34.0900, longitude: -118.3617 };
 
 let stopCounter = 0;
 function nextStopId() {
@@ -37,7 +38,19 @@ export default function CreateStep() {
   // search results shown as unconfirmed "+" pins on the map until tapped
   const [candidates, setCandidates] = useState<PlaceSuggestion[]>([]);
   const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
+  const [mapRegion, setMapRegion] = useState(DEFAULT_REGION);
   const [focusPoint, setFocusPoint] = useState<{ latitude: number; longitude: number } | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') return;
+      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const coords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+      setCurrentLocation(coords);
+      setMapRegion(coords);
+    })();
+  }, []);
 
   const [pendingCoord, setPendingCoord] = useState<{ latitude: number; longitude: number } | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -169,7 +182,7 @@ export default function CreateStep() {
       <DiscoverMap
         stops={stops.map((s: any) => ({ id: s.id, name: s.name, lat: s.lat, lng: s.lng }))}
         candidates={candidates.map((c) => ({ id: `${c.osmType}-${c.osmId}`, name: c.name, lat: c.lat, lng: c.lng }))}
-        initialRegion={DEFAULT_REGION}
+        initialRegion={mapRegion}
         currentLocation={currentLocation}
         focusPoint={focusPoint}
         onLongPress={handleLongPress}
