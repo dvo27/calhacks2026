@@ -1,0 +1,148 @@
+1. Product Overview
+
+Trek turns a vague idea ("coffee → food → museum → sunset → Griffith") into a costed, timed, optimized day. Before leaving the house, a user sees the full route, total drive time, gas cost, per-stop and total budget, weather windows, and a schedule. Activity cards are draggable; reordering instantly recomputes route, ETA, budget, and gas.
+
+After the day happens, a user can flip the same venture into a public post — itinerary in order, map preview, photos per stop, per-place ratings/reviews, an overall day rating, caption, and tags. Other users discover these in a social feed, read place-level reviews, and copy the route into their own planner with one tap.
+
+Two product loops:
+
+
+Planning loop (utility): create venture → add cards → optimize → see cost/time/weather → save.
+Social loop (growth): complete a day → publish with reviews/photos → others discover → copy route → new venture. The copy action is the viral engine.
+
+
+A lightweight Ideation Folder system lets users dump TikTok/Instagram links into folders now (URL only — no scraping/transcription yet) and convert them into itinerary ideas later.
+
+
+2. User Personas
+
+1. "Planner Paige" — 24, lives in Irvine.
+Plans date nights and friend hangs. Wants to know exactly what a day costs before committing. Hates surprise gas + parking + food math. Core value: budget control + no decision fatigue.
+
+2. "Explorer Eli" — 29, content-adjacent.
+Saves dozens of TikToks of cool LA spots and never does anything with them. Wants a graveyard-of-links to become real plans. Core value: Ideation Folders → itineraries.
+
+3. "Social Sofia" — 21, micro-creator.
+Documents her food crawls and museum days. Wants a cleaner, more useful Beli — where her review is attached to a route, not just a single restaurant. Core value: publishing routes + place reviews, getting saves/likes.
+
+4. "Copycat Chris" — 26, new to a city / decision-averse.
+Doesn't want to plan; wants to run someone else's proven day. Core value: discover feed + one-tap copy route. (This persona drives retention and is the cheapest to acquire.)
+
+
+3. Full Screen List
+
+Auth & Onboarding
+
+
+Splash
+Sign Up / Sign In (Cognito)
+Onboarding carousel (value prop + location permission)
+Permissions priming (location, notifications)
+
+
+Core Planner
+5. Home / Dashboard
+6. Create Venture (set origin, destination area, date)
+7. Venture Builder (the heart — cards + map + summary)
+8. Add Activity Card (place search / manual)
+9. Card Detail / Edit
+10. Route Map (full-screen)
+11. Budget Breakdown
+12. Weather Detail
+13. Schedule / Timeline view
+
+Ideation
+14. Ideation Folders (list)
+15. Folder Detail (saved links grid)
+16. Save Link (share-sheet target + in-app)
+17. Convert Link → Idea
+
+Social
+18. Discover Feed (public ventures)
+19. Public Venture Detail (full day, stops, reviews, photos)
+20. Place Review Detail
+21. Publish Venture (add caption, tags, day rating)
+22. Per-Stop Review Composer (rating, review, photos, actual cost)
+23. Comments
+24. User Profile (own + others)
+25. Saved Ventures (copied/bookmarked routes)
+
+System
+26. Search (places, ventures, tags, users)
+27. Notifications
+28. Settings
+
+
+4. Mobile Mockup Descriptions
+
+Design language: card-based, minimal, lots of white space, one accent color, big rounded corners (16–20px), soft shadows, bottom-sheet interactions. Think Beli's social clarity + Citymapper's transit density restraint.
+
+5. Home / Dashboard
+
+
+Top: greeting + today's weather chip + a "Plan a new day" primary button (full-width, accent).
+Section "Your Ventures": horizontal carousel of venture cards (cover map thumbnail, title, date, total cost badge, stop count).
+Section "Continue planning": drafts.
+Section "From your feed": 2–3 public ventures you might copy.
+Bottom tab bar (see nav).
+
+
+7. Venture Builder (hero screen)
+
+Vertical split:
+
+
+Top 40% — live map with numbered pins + polyline route. Collapses to a thin strip on scroll.
+Summary bar (sticky, between map and cards): four pill metrics — ⏱ Drive 1h 12m · 💵 $84 · ⛽ $11 · ☀️ 72°. These animate/recount on reorder.
+Bottom 60% — draggable card list. Each card: drag handle, order number, place name, category icon, address line, $ est + ⏱ dur chips, notes preview. Long-press → lift + reorder; release → metrics recompute with a subtle shimmer.
+Floating + Add stop button.
+Sticky footer: Save private / Publish.
+
+
+8/9. Add / Edit Card
+
+Bottom sheet: place autocomplete (Location/Google), category selector (coffee, food, museum, view, nightlife, niche…), estimated cost stepper, duration stepper, notes field. Edit reuses the same sheet pre-filled, plus delete.
+
+10. Route Map (full-screen)
+
+Full map, numbered stops, tap a pin → mini card peek, leg-by-leg drive times along the polyline, recenter + "open in Maps" buttons.
+
+11. Budget Breakdown
+
+Donut chart (food / activities / gas / misc) + line-item list per stop showing estimated vs (later) actual. Total at top, "per person" toggle.
+
+12. Weather Detail
+
+Hour-by-hour strip aligned to the schedule — so each stop shows the forecast for the time you'll be there (key differentiator). Sunset time highlighted for "sunset lookout" stops.
+
+13. Schedule / Timeline
+
+Vertical timeline: arrival → activity duration → drive leg → next arrival, with clock times. Drag here also reorders.
+
+14/15. Ideation Folders
+
+
+Folders list: grid of folder cards (name, item count, last-saved thumbnail collage).
+Folder detail: grid of saved link cards — platform icon (TikTok/IG), thumbnail placeholder, caption snippet, saved date. Tap → opens original link externally. Multi-select → "Turn into venture" (later).
+
+
+16. Save Link
+
+Two entry points: (a) OS share sheet — user shares a TikTok/IG video → Trek appears as a target → folder picker bottom sheet → save URL only. (b) In-app "+ Save link" → paste URL → pick folder. No scraping; we store the canonical URL + platform + savedAt.
+
+18. Discover Feed
+
+Beli-style vertical feed of PublicVenturePosts. Each post card: cover = map route preview, title + tags (date night, food crawl…), author avatar/handle, overall day rating (★), 3–4 stacked stop thumbnails, like/comment/save counts, prominent "Copy route" button. Filter bar on top: tags, area, rating, distance.
+
+19. Public Venture Detail
+
+
+Header: map route preview + caption + tags + overall ★ + author.
+Stops list in order: each expandable stop = photos carousel, place name + category, user rating ★, review text, "would recommend" chip, cost.
+Sticky footer: ❤️ Like · 💬 Comment · 🔖 Save · ➕ Copy to my planner.
+Copy spawns a private editable venture pre-filled with all stops.
+
+
+21/22. Publish + Per-Stop Review Composer
+
+Publish flow: pick which completed venture → for each stop, composer (star rating, review text, photo upload, actual cost, wouldVisitAgain toggle, visitedAt) → overall day rating → caption → tags → visibility (public) → post.
