@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors } from '@/constants/colors';
-import { getActivityFeed, type ActivityEvent } from '@/lib/api';
+import { getActivityFeed, followUser, type ActivityEvent } from '@/lib/api';
 
 const AVATAR_COLORS = [
   ['#9BE15D', '#3FA34D'],
@@ -83,7 +83,18 @@ function EventRow({ event }: { event: ActivityEvent }) {
       break;
   }
 
-  const showFollowBack = event.type === 'follow';
+  const showFollowBack = event.type === 'follow' && !!actor?.id;
+  const [followed, setFollowed] = React.useState(false);
+
+  async function handleFollowBack() {
+    if (!actor?.id || followed) return;
+    try {
+      await followUser(actor.id);
+      setFollowed(true);
+    } catch {
+      // silent
+    }
+  }
 
   return (
     <View style={styles.row}>
@@ -95,8 +106,15 @@ function EventRow({ event }: { event: ActivityEvent }) {
         <Text style={styles.time}>{timeAgo(event.created_at)}</Text>
       </View>
       {showFollowBack && (
-        <TouchableOpacity style={styles.followBtn} activeOpacity={0.7}>
-          <Text style={styles.followBtnText}>Follow back</Text>
+        <TouchableOpacity
+          style={[styles.followBtn, followed && styles.followBtnDone]}
+          activeOpacity={0.7}
+          onPress={handleFollowBack}
+          disabled={followed}
+        >
+          <Text style={[styles.followBtnText, followed && styles.followBtnDoneText]}>
+            {followed ? 'Following' : 'Follow back'}
+          </Text>
         </TouchableOpacity>
       )}
     </View>
@@ -229,6 +247,13 @@ const styles = StyleSheet.create({
     color: Colors.coral,
     fontWeight: '700',
     fontSize: 12,
+  },
+  followBtnDone: {
+    borderColor: Colors.soft,
+    backgroundColor: Colors.bg,
+  },
+  followBtnDoneText: {
+    color: Colors.soft,
   },
   empty: {
     alignItems: 'center',

@@ -229,6 +229,28 @@ export function createSocialRouter() {
     }
   });
 
+  router.get('/users/search', async (req, res) => {
+    try {
+      const q = String(req.query.q ?? '').trim();
+      if (!q || q.length < 2) {
+        res.status(200).json({ users: [] });
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('users')
+        .select('id, username, avatar_url')
+        .ilike('username', `%${q}%`)
+        .limit(20);
+
+      if (error) throw error;
+      res.status(200).json({ users: data ?? [] });
+    } catch (error) {
+      console.error('Error searching users:', error);
+      res.status(500).json({ error: 'Failed to search users.' });
+    }
+  });
+
   router.post('/users/:id/follow', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
     try {
       const userId = req.user?.id;

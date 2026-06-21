@@ -3,7 +3,12 @@ import {
   View,
   Text,
   ScrollView,
+  TextInput,
+  FlatList,
   TouchableOpacity,
+  Modal,
+  KeyboardAvoidingView,
+  Platform,
   StyleSheet,
   ActivityIndicator,
   RefreshControl,
@@ -15,8 +20,12 @@ import Chip from '@/components/ui/Chip';
 import {
   getPlaceSuggestions,
   getExploreFeed,
+  searchUsers,
+  followUser,
+  unfollowUser,
   type PlaceSuggestion,
   type ExploreTrip,
+  type PublicUser,
 } from '@/lib/api';
 
 const CATEGORIES = ['All', 'Food', 'Shopping', 'Nightlife', 'Attractions'] as const;
@@ -143,6 +152,115 @@ function TripCard({ trip, onPress }: { trip: ExploreTrip; onPress: () => void })
   );
 }
 
+function UserSearchSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
+  const insets = useSafeAreaInsets();
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<PublicUser[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [followed, setFollowed] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (!query.trim() || query.trim().length < 2) { setResults([]); return; }
+    const t = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await searchUsers(query.trim());
+        setResults(res.users);
+      } catch { setResults([]); }
+      finally { setSearching(false); }
+    }, 350);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  async function handleFollow(user: PublicUser) {
+    if (followed.has(user.id)) {
+      await unfollowUser(user.id).catch(() => {});
+      setFollowed((s) => { const n = new Set(s); n.delete(user.id); return n; });
+    } else {
+      await followUser(user.id).catch(() => {});
+      setFollowed((s) => new Set(s).add(user.id));
+    }
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
+      <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
+        <TouchableOpacity style={userStyles.backdrop} activeOpacity={1} onPress={onClose} />
+        <View style={[userStyles.sheet, { paddingBottom: insets.bottom + 8 }]}>
+          <View style={userStyles.handle} />
+          <View style={userStyles.header}>
+            <Text style={userStyles.title}>Find people</Text>
+            <TouchableOpacity onPress={onClose}><Text style={userStyles.close}>✕</Text></TouchableOpacity>
+          </View>
+          <View style={userStyles.inputWrap}>
+            <Text style={userStyles.inputIcon}>🔍</Text>
+            <TextInput
+              style={userStyles.input}
+              placeholder="Search by username…"
+              placeholderTextColor={Colors.soft}
+              value={query}
+              onChangeText={setQuery}
+              autoFocus
+              autoCapitalize="none"
+            />
+          </View>
+          {searching && <ActivityIndicator color={Colors.coral} style={{ marginTop: 20 }} />}
+          <FlatList
+            data={results}
+            keyExtractor={(u) => u.id}
+            style={{ flex: 1, paddingHorizontal: 18 }}
+            ListEmptyComponent={
+              query.trim().length >= 2 && !searching ? (
+                <Text style={userStyles.empty}>No users found for "{query}"</Text>
+              ) : null
+            }
+            renderItem={({ item }) => {
+              const isFollowed = followed.has(item.id);
+              return (
+                <View style={userStyles.userRow}>
+                  <View style={userStyles.avatar}>
+                    <Text style={userStyles.avatarText}>{(item.username ?? '?')[0].toUpperCase()}</Text>
+                  </View>
+                  <Text style={userStyles.username}>@{item.username ?? 'unknown'}</Text>
+                  <TouchableOpacity
+                    style={[userStyles.followBtn, isFollowed && userStyles.followBtnDone]}
+                    onPress={() => handleFollow(item)}
+                  >
+                    <Text style={[userStyles.followBtnText, isFollowed && userStyles.followBtnDoneText]}>
+                      {isFollowed ? 'Following' : 'Follow'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              );
+            }}
+          />
+        </View>
+      </KeyboardAvoidingView>
+    </Modal>
+  );
+}
+
+const userStyles = StyleSheet.create({
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.4)' },
+  sheet: { backgroundColor: Colors.paper, borderTopLeftRadius: 24, borderTopRightRadius: 24, maxHeight: '70%', minHeight: 320 },
+  handle: { width: 40, height: 5, borderRadius: 3, backgroundColor: Colors.line, alignSelf: 'center', marginTop: 10, marginBottom: 4 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingVertical: 10 },
+  title: { fontWeight: '700', fontSize: 17, color: Colors.ink },
+  close: { fontSize: 16, color: Colors.soft, padding: 4 },
+  inputWrap: { flexDirection: 'row', alignItems: 'center', marginHorizontal: 18, marginBottom: 12, backgroundColor: Colors.bg, borderRadius: 14, paddingHorizontal: 14 },
+  inputIcon: { fontSize: 15, marginRight: 8 },
+  input: { flex: 1, paddingVertical: 12, fontSize: 15, color: Colors.ink },
+  empty: { textAlign: 'center', color: Colors.soft, fontSize: 14, paddingTop: 24 },
+  userRow: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: Colors.line },
+  avatar: { width: 38, height: 38, borderRadius: 19, backgroundColor: Colors.coral, alignItems: 'center', justifyContent: 'center' },
+  avatarText: { color: '#fff', fontWeight: '700', fontSize: 15 },
+  username: { flex: 1, fontWeight: '600', fontSize: 15, color: Colors.ink },
+  followBtn: { borderWidth: 1, borderColor: Colors.coral, borderRadius: 10, paddingHorizontal: 14, paddingVertical: 7 },
+  followBtnDone: { borderColor: Colors.soft, backgroundColor: Colors.bg },
+  followBtnText: { fontWeight: '700', fontSize: 13, color: Colors.coral },
+  followBtnDoneText: { color: Colors.soft },
+});
+
 export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
@@ -153,6 +271,7 @@ export default function ExploreScreen() {
   const [loadingPlaces, setLoadingPlaces] = useState(true);
   const [loadingTrips, setLoadingTrips] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [showUserSearch, setShowUserSearch] = useState(false);
 
   const fetchData = useCallback(async () => {
     const catQuery = activeCat === 'All' ? '' : activeCat.toLowerCase();
@@ -209,10 +328,12 @@ export default function ExploreScreen() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Explore</Text>
-        <TouchableOpacity style={styles.searchBtn}>
+        <TouchableOpacity style={styles.searchBtn} onPress={() => setShowUserSearch(true)}>
           <Text style={{ fontSize: 18 }}>{'\u{1F50D}'}</Text>
         </TouchableOpacity>
       </View>
+
+      <UserSearchSheet visible={showUserSearch} onClose={() => setShowUserSearch(false)} />
 
       <ScrollView
         contentContainerStyle={styles.scroll}

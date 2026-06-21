@@ -304,3 +304,112 @@ export function getFeed() {
 export function getMyTrips() {
   return apiFetch<TripsResponse>('/api/trips/mine', { method: 'GET' });
 }
+
+// ---- Explore ----
+
+export interface ExploreTrip {
+  id: number;
+  title: string;
+  is_public: boolean;
+  created_at: string;
+  total_budget: number | null;
+  total_distance_miles: number | null;
+  total_drive_time_minutes: number | null;
+  total_gas_cost: number | null;
+  user: { id: string; username: string | null; avatar_url: string | null } | null;
+  activities: Array<{ id: number; title: string; description?: string | null; location_coords?: unknown; tags?: string[] | null }>;
+  engagement: { likes: number; comments: number; shares: number };
+}
+
+export function getExploreFeed() {
+  return apiFetch<{ trips: ExploreTrip[] }>('/api/trips/feed', { method: 'GET' });
+}
+
+// ---- Social: likes ----
+
+export interface Engagement {
+  likes: number;
+  comments: number;
+  saves: number;
+  copies: number;
+}
+
+export function likeTrip(tripId: number | string) {
+  return apiFetch<{ liked: boolean; engagement: Engagement }>(`/api/trips/${tripId}/like`, { method: 'POST' });
+}
+
+export function unlikeTrip(tripId: number | string) {
+  return apiFetch<{ liked: boolean; engagement: Engagement }>(`/api/trips/${tripId}/like`, { method: 'DELETE' });
+}
+
+export function getLikes(tripId: number | string) {
+  return apiFetch<{ likes: Array<{ id: number; user: { id: string; username: string | null } | null }>; engagement: Engagement }>(`/api/trips/${tripId}/likes`);
+}
+
+// ---- Social: comments ----
+
+export interface Comment {
+  id: number;
+  user_id: string;
+  trip_id: number;
+  comment_text: string;
+  created_at: string;
+  user?: { id: string; username: string | null } | null;
+}
+
+export function getComments(tripId: number | string) {
+  return apiFetch<{ comments: Comment[] }>(`/api/trips/${tripId}/comments`);
+}
+
+export function addComment(tripId: number | string, text: string) {
+  return apiFetch<{ comment: Comment; engagement: Engagement }>(`/api/trips/${tripId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify({ comment_text: text }),
+  });
+}
+
+// ---- Social: share ----
+
+export function recordShare(tripId: number | string, platform = 'imessage') {
+  return apiFetch<{ share: { id: number }; engagement: Engagement }>(`/api/trips/${tripId}/share`, {
+    method: 'POST',
+    body: JSON.stringify({ platform }),
+  });
+}
+
+// ---- Social: follow ----
+
+export function followUser(userId: string) {
+  return apiFetch<{ following: boolean }>(`/api/users/${userId}/follow`, { method: 'POST' });
+}
+
+export function unfollowUser(userId: string) {
+  return apiFetch<{ following: boolean }>(`/api/users/${userId}/follow`, { method: 'DELETE' });
+}
+
+// ---- Social: user search ----
+
+export interface PublicUser {
+  id: string;
+  username: string | null;
+  avatar_url: string | null;
+}
+
+export function searchUsers(query: string) {
+  return apiFetch<{ users: PublicUser[] }>(`/api/users/search?q=${encodeURIComponent(query)}`);
+}
+
+// ---- Activity feed ----
+
+export interface ActivityEvent {
+  type: 'like' | 'comment' | 'share' | 'follow';
+  created_at: string;
+  actor?: { id: string; username: string | null } | null;
+  trip?: { id: number; title: string } | null;
+  comment_text?: string;
+  platform?: string;
+}
+
+export function getActivityFeed() {
+  return apiFetch<{ events: ActivityEvent[] }>('/api/activity');
+}
