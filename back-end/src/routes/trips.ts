@@ -37,6 +37,22 @@ type RoutePreviewPoint = {
   longitude: number;
 };
 
+function getOverallTripRating(activities: Array<{ rating?: number | null }> | null | undefined) {
+  const ratings = (activities ?? [])
+    .map((activity) => (typeof activity.rating === 'number' ? activity.rating : null))
+    .filter((rating): rating is number => rating !== null);
+
+  if (!ratings.length) {
+    return { averageRating: null, ratingCount: 0 };
+  }
+
+  const sum = ratings.reduce((total, rating) => total + rating, 0);
+  return {
+    averageRating: Number((sum / ratings.length).toFixed(1)),
+    ratingCount: ratings.length,
+  };
+}
+
 type RecommendationItem = {
   kind: 'place' | 'trip';
   title: string;
@@ -591,7 +607,7 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
         .select(`
           id, title, total_budget, total_distance_miles, total_drive_time_minutes, total_gas_cost, created_at,
           user:users (id, username, avatar_url),
-          activities (id, title, description, location_name, cost, start_time, end_time, tags, location_coords),
+          activities (id, title, description, location_name, cost, start_time, end_time, tags, location_coords, rating),
           trip_media (id, s3_url, activity_id, media_type, caption, created_at)
         `)
         .eq('is_public', true)
@@ -605,6 +621,7 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
         (publicTrips ?? []).map(async (trip) => ({
           ...trip,
           route_preview_points: routePreviewByTrip.get(trip.id) ?? buildRoutePreviewPoints(trip.activities as Array<{ id: number; title: string; location_coords?: unknown }> | null | undefined),
+          ...getOverallTripRating(trip.activities as Array<{ rating?: number | null }> | null | undefined),
           engagement: await getTripEngagementCounts(trip.id),
         }))
       );
@@ -629,7 +646,7 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
         .from('trips')
         .select(`
           id, title, is_public, created_at, total_budget, total_distance_miles, total_drive_time_minutes, total_gas_cost,
-          activities (id, title, description, location_name, cost, start_time, end_time, tags, location_coords),
+          activities (id, title, description, location_name, cost, start_time, end_time, tags, location_coords, rating),
           trip_media (id, s3_url, activity_id, media_type, caption, created_at)
         `)
         .eq('user_id', userId)
@@ -643,6 +660,7 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
         (trips ?? []).map(async (trip) => ({
           ...trip,
           route_preview_points: routePreviewByTrip.get(trip.id) ?? buildRoutePreviewPoints(trip.activities as Array<{ id: number; title: string; location_coords?: unknown }> | null | undefined),
+          ...getOverallTripRating(trip.activities as Array<{ rating?: number | null }> | null | undefined),
           engagement: await getTripEngagementCounts(trip.id),
         }))
       );
@@ -1027,7 +1045,7 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
 
       const engagement = await getTripEngagementCounts(trip.id);
 
-      res.status(200).json({ trip: { ...trip, engagement } });
+      res.status(200).json({ trip: { ...trip, ...getOverallTripRating(trip.activities as Array<{ rating?: number | null }> | null | undefined), engagement } });
     } catch (error) {
       console.error('Error fetching trip detail:', error);
       res.status(500).json({ error: 'Failed to retrieve trip detail.' });

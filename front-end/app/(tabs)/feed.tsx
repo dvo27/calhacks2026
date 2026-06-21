@@ -1,10 +1,10 @@
 import { useCallback, useState } from 'react';
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator } from 'react-native';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator, Modal, TextInput } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter, useFocusEffect } from 'expo-router';
 import { Colors } from '@/constants/colors';
 import { useTrekStore } from '@/lib/store';
-import { getFeed, type TripSummary } from '@/lib/api';
+import { addTripComment, getFeed, likeTrip, type TripSummary } from '@/lib/api';
 import TripCard from '@/components/feed/TripCard';
 
 export default function FeedScreen() {
@@ -16,6 +16,9 @@ export default function FeedScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [commentTrip, setCommentTrip] = useState<TripSummary | null>(null);
+  const [commentText, setCommentText] = useState('');
+  const [commentBusy, setCommentBusy] = useState(false);
 
   const load = useCallback(async (mode: 'initial' | 'refresh') => {
     if (mode === 'refresh') setRefreshing(true);
@@ -42,6 +45,60 @@ export default function FeedScreen() {
   function handleNewDay() {
     startNewDay();
     router.push('/plan');
+  }
+
+  function updateTripEngagement(tripId: number, next: { likes?: number; comments?: number; shares?: number }) {
+    setTrips((prev) =>
+      prev.map((trip) =>
+        trip.id === tripId
+          ? {
+              ...trip,
+              engagement: {
+                ...trip.engagement,
+                ...(next.likes !== undefined ? { likes: next.likes } : {}),
+                ...(next.comments !== undefined ? { comments: next.comments } : {}),
+              },
+            }
+          : trip
+      )
+    );
+  }
+
+  async function handleLike(trip: TripSummary) {
+    try {
+      const response = await likeTrip(trip.id);
+      const likes = response.engagement?.likes;
+      const comments = response.engagement?.comments;
+      updateTripEngagement(trip.id, {
+        likes: likes ?? ((trip.engagement?.likes ?? 0) + 1),
+        comments: comments ?? (trip.engagement?.comments ?? 0),
+      });
+    } catch (err) {
+      console.warn('Failed to like trip', err);
+    }
+  }
+
+  function openComment(trip: TripSummary) {
+    setCommentTrip(trip);
+    setCommentText('');
+  }
+
+  async function submitComment() {
+    if (!commentTrip || !commentText.trim()) return;
+    setCommentBusy(true);
+    try {
+      const response = await addTripComment(commentTrip.id, commentText.trim());
+      updateTripEngagement(commentTrip.id, {
+        likes: response.engagement?.likes ?? commentTrip.engagement?.likes ?? 0,
+        comments: response.engagement?.comments ?? ((commentTrip.engagement?.comments ?? 0) + 1),
+      });
+      setCommentTrip(null);
+      setCommentText('');
+    } catch (err) {
+      console.warn('Failed to add comment', err);
+    } finally {
+      setCommentBusy(false);
+    }
   }
 
   return (
@@ -78,12 +135,50 @@ export default function FeedScreen() {
           <Text style={styles.empty}>No shared trips yet. Build a day and share it to the feed!</Text>
         ) : (
           trips.map((trip) => (
-            <TripCard key={trip.id} trip={trip} showAuthor onPress={() => router.push(`/trip/${trip.id}`)} />
+            <TripCard
+              key={trip.id}
+              trip={trip}
+              showAuthor
+              onPress={() => router.push(`/trip/${trip.id}`)}
+              onLike={() => void handleLike(trip)}
+              onComment={() => openComment(trip)}
+            />
           ))
         )}
 
         <View style={{ height: 20 }} />
       </ScrollView>
+
+      <Modal visible={commentTrip !== null} transparent animationType="fade" onRequestClose={() => setCommentTrip(null)}>
+        <View style={styles.commentBackdrop}>
+          <View style={styles.commentSheet}>
+            <View style={styles.commentGrab} />
+            <Text style={styles.commentTitle}>Add a comment</Text>
+            <Text style={styles.commentTripTitle}>{commentTrip?.title ?? ''}</Text>
+            <TextInput
+              style={styles.commentInput}
+              value={commentText}
+              onChangeText={setCommentText}
+              placeholder="Write something nice…"
+              placeholderTextColor={Colors.soft}
+              multiline
+              autoFocus
+            />
+            <View style={styles.commentActions}>
+              <TouchableOpacity style={styles.commentCancel} onPress={() => setCommentTrip(null)}>
+                <Text style={styles.commentCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.commentSubmit, commentBusy && styles.commentSubmitDisabled]}
+                onPress={submitComment}
+                disabled={commentBusy || !commentText.trim()}
+              >
+                <Text style={styles.commentSubmitText}>{commentBusy ? 'Posting…' : 'Post'}</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -135,4 +230,28 @@ const styles = StyleSheet.create({
     marginBottom: 10,
   },
   empty: { color: Colors.soft, fontSize: 14, textAlign: 'center', marginTop: 24, paddingHorizontal: 20, lineHeight: 20 },
+  commentBackdrop: { flex: 1, backgroundColor: 'rgba(15,16,22,0.45)', justifyContent: 'flex-end' },
+  commentSheet: { backgroundColor: Colors.paper, borderTopLeftRadius: 26, borderTopRightRadius: 26, paddingHorizontal: 18, paddingTop: 8, paddingBottom: 18 },
+  commentGrab: { width: 42, height: 5, borderRadius: 5, backgroundColor: '#DADBD4', alignSelf: 'center', marginBottom: 14 },
+  commentTitle: { fontSize: 20, fontWeight: '800', color: Colors.ink },
+  commentTripTitle: { marginTop: 4, fontSize: 12, color: Colors.soft, fontWeight: '600' },
+  commentInput: {
+    minHeight: 96,
+    marginTop: 14,
+    backgroundColor: Colors.bg,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.line,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
+    color: Colors.ink,
+    textAlignVertical: 'top',
+  },
+  commentActions: { flexDirection: 'row', gap: 10, marginTop: 16 },
+  commentCancel: { flex: 1, paddingVertical: 14, borderRadius: 14, backgroundColor: Colors.bg, alignItems: 'center', borderWidth: 1, borderColor: Colors.line },
+  commentCancelText: { color: Colors.ink, fontWeight: '700' },
+  commentSubmit: { flex: 1, paddingVertical: 14, borderRadius: 14, backgroundColor: Colors.coral, alignItems: 'center' },
+  commentSubmitDisabled: { opacity: 0.6 },
+  commentSubmitText: { color: '#fff', fontWeight: '700' },
 });

@@ -299,6 +299,23 @@ export function publishTrip(tripId: number | string) {
   return apiFetch<any>(`/api/trips/${tripId}/publish`, { method: 'POST' });
 }
 
+export function likeTrip(tripId: number | string) {
+  return apiFetch<{ liked: boolean; alreadyLiked?: boolean; engagement?: { likes?: number; comments?: number; shares?: number } }>(
+    `/api/trips/${tripId}/like`,
+    { method: 'POST' }
+  );
+}
+
+export function addTripComment(tripId: number | string, commentText: string) {
+  return apiFetch<{ comment: { id: number; comment_text: string; created_at: string }; engagement?: { likes?: number; comments?: number; shares?: number } }>(
+    `/api/trips/${tripId}/comments`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ comment_text: commentText }),
+    }
+  );
+}
+
 export interface UploadMediaPayload {
   base64: string;
   mediaType?: string;
@@ -334,10 +351,12 @@ export interface TripSummary {
   total_drive_time_minutes: number | null;
   total_gas_cost: number | string | null;
   user?: { id: string; username: string | null; avatar_url: string | null } | null;
-  activities?: Array<{ id: number; title?: string; description?: string | null; location_coords?: unknown }> | null;
+  activities?: Array<{ id: number; title?: string; description?: string | null; location_coords?: unknown; rating?: number | null }> | null;
   route_preview_points?: Array<{ id: number; title: string; latitude: number; longitude: number }> | null;
   trip_media?: Array<{ id?: number; s3_url: string; activity_id?: number | null; media_type?: string | null; caption?: string | null; created_at: string }> | null;
   engagement?: { likes?: number; comments?: number; saves?: number; copies?: number } | null;
+  averageRating?: number | null;
+  ratingCount?: number;
 }
 
 export interface TripsResponse {

@@ -8,6 +8,8 @@ interface TripCardProps {
   onPress?: () => void;
   showAuthor?: boolean;
   showPrivacy?: boolean;
+  onLike?: () => void;
+  onComment?: () => void;
 }
 
 function toNum(value: number | string | null | undefined): number {
@@ -21,6 +23,11 @@ function formatDrive(minutes: number | null): string {
   if (m <= 0) return '—';
   if (m < 60) return `${m}m`;
   return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+function formatRating(value: number | null | undefined) {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return value.toFixed(1);
 }
 
 function parseCoordinates(value: unknown): { latitude: number; longitude: number } | null {
@@ -84,7 +91,7 @@ function buildGoogleMapsUrl(points: TripRoutePoint[]): string | null {
   return `https://www.google.com/maps/dir/?${query}`;
 }
 
-export default function TripCard({ trip, onPress, showAuthor, showPrivacy }: TripCardProps) {
+export default function TripCard({ trip, onPress, showAuthor, showPrivacy, onLike, onComment }: TripCardProps) {
   const { width: screenWidth } = useWindowDimensions();
   const routePoints: TripRoutePoint[] = (trip.route_preview_points ?? []).map((point) => ({
     id: point.id,
@@ -116,6 +123,10 @@ export default function TripCard({ trip, onPress, showAuthor, showPrivacy }: Tri
   const initial = author.charAt(0).toUpperCase() || '?';
   const cardWidth = Math.max(0, screenWidth - 36);
   const directionsUrl = buildGoogleMapsUrl(fallbackPoints);
+  const likes = trip.engagement?.likes ?? 0;
+  const comments = trip.engagement?.comments ?? 0;
+  const averageRating = trip.averageRating ?? null;
+  const ratingCount = trip.ratingCount ?? 0;
   const mediaSlides = [
     ...(fallbackPoints.length > 0 ? [{ key: 'route', type: 'route' as const }] : []),
     ...(cover ? [{ key: `cover-${cover}`, type: 'cover' as const, url: cover }] : []),
@@ -176,26 +187,13 @@ export default function TripCard({ trip, onPress, showAuthor, showPrivacy }: Tri
 
         <View style={styles.metaRow}>
           <View style={styles.metaGroup}>
+            <Meta value={formatRating(averageRating)} label={`rating${ratingCount ? ` · ${ratingCount}` : ''}`} />
             <Meta value={`${stops}`} label="stops" />
             <Meta value={`${photoCount}`} label="photos" />
             <Meta value={formatDrive(trip.total_drive_time_minutes)} label="drive" />
             <Meta value={`$${toNum(trip.total_budget).toFixed(0)}`} label="budget" />
             <Meta value={`${toNum(trip.total_distance_miles).toFixed(0)} mi`} label="miles" />
           </View>
-          {directionsUrl ? (
-            <TouchableOpacity
-              style={styles.copyBtn}
-              onPress={async () => {
-                const canOpen = await Linking.canOpenURL(directionsUrl);
-                if (canOpen) {
-                  await Linking.openURL(directionsUrl);
-                }
-              }}
-              activeOpacity={0.85}
-            >
-              <Text style={styles.copyBtnText}>Open in Maps</Text>
-            </TouchableOpacity>
-          ) : null}
         </View>
 
         {description ? (
@@ -203,6 +201,46 @@ export default function TripCard({ trip, onPress, showAuthor, showPrivacy }: Tri
             {description}
           </Text>
         ) : null}
+
+        <View style={styles.socialRow}>
+          <TouchableOpacity
+            style={styles.socialAction}
+            activeOpacity={0.8}
+            onPress={(e) => {
+              e.stopPropagation();
+              onLike?.();
+            }}
+          >
+            <Text style={styles.socialIcon}>♡</Text>
+            <Text style={styles.socialText}>{likes}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.socialAction}
+            activeOpacity={0.8}
+            onPress={(e) => {
+              e.stopPropagation();
+              onComment?.();
+            }}
+          >
+            <Text style={styles.socialIcon}>💬</Text>
+            <Text style={styles.socialText}>{comments}</Text>
+          </TouchableOpacity>
+          <View style={{ flex: 1 }} />
+          <TouchableOpacity
+            style={styles.copyBtn}
+            onPress={async (e) => {
+              e.stopPropagation();
+              if (!directionsUrl) return;
+              const canOpen = await Linking.canOpenURL(directionsUrl);
+              if (canOpen) {
+                await Linking.openURL(directionsUrl);
+              }
+            }}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.copyBtnText}>Open in Maps</Text>
+          </TouchableOpacity>
+        </View>
       </TouchableOpacity>
     </View>
   );
@@ -255,6 +293,11 @@ const styles = StyleSheet.create({
   meta: { flexDirection: 'column' },
   metaValue: { fontWeight: '700', fontSize: 18, color: Colors.ink },
   metaLabel: { fontSize: 10, color: Colors.soft, marginTop: 2 },
+  description: { marginTop: 12, fontSize: 13, lineHeight: 19, color: Colors.ink2 },
+  socialRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 14 },
+  socialAction: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingVertical: 4, paddingRight: 8 },
+  socialIcon: { fontSize: 18, color: Colors.ink2, lineHeight: 20 },
+  socialText: { fontSize: 13, fontWeight: '700', color: Colors.ink2 },
   copyBtn: {
     paddingHorizontal: 12,
     paddingVertical: 8,
@@ -263,5 +306,4 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
   },
   copyBtnText: { color: '#fff', fontWeight: '700', fontSize: 12 },
-  description: { marginTop: 12, fontSize: 13, lineHeight: 19, color: Colors.ink2 },
 });

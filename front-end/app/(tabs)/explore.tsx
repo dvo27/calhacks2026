@@ -54,7 +54,7 @@ function buildAppleMapsUrl(title: string, lat: number, lng: number) {
 export default function ExploreScreen() {
   const insets = useSafeAreaInsets();
   const [query, setQuery] = useState('');
-  const [locationQuery, setLocationQuery] = useState(DEFAULT_LOCATION_QUERY);
+  const [locationQuery, setLocationQuery] = useState('');
   const [origin, setOrigin] = useState<{ latitude: number; longitude: number } | null>(null);
   const [headline, setHeadline] = useState('Top picks near you');
   const [items, setItems] = useState<RecommendationItem[]>([]);
@@ -104,9 +104,13 @@ export default function ExploreScreen() {
   }
 
   useEffect(() => {
-    void loadRecommendations();
+    if (!origin) return;
+    const timer = setTimeout(() => {
+      void loadRecommendations();
+    }, 350);
+    return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [origin]);
+  }, [origin, locationQuery, query]);
 
   const subtitle = useMemo(() => {
     if (origin) return 'Using your current location';
