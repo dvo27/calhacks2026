@@ -162,6 +162,13 @@ export function deleteTripActivity(activityId: number | string) {
   return apiFetch<void>(`/api/trips/activities/${activityId}`, { method: 'DELETE' });
 }
 
+export interface ActivityMedia {
+  id: number;
+  url: string;
+  mediaType: string | null;
+  caption: string | null;
+}
+
 export interface TimelineActivity {
   id: number;
   title: string;
@@ -174,6 +181,7 @@ export interface TimelineActivity {
   cost: number;
   tags: string[];
   rating: number | null;
+  media: ActivityMedia[];
 }
 
 export interface TripTimelineResponse {
@@ -206,6 +214,7 @@ export interface UpdateActivityPayload {
   title?: string;
   cost?: number;
   rating?: number | null;
+  description?: string | null;
   start_time?: string | null;
   end_time?: string | null;
 }
@@ -235,4 +244,57 @@ export function updateTrip(tripId: number | string, payload: UpdateTripPayload) 
 
 export function publishTrip(tripId: number | string) {
   return apiFetch<any>(`/api/trips/${tripId}/publish`, { method: 'POST' });
+}
+
+export interface UploadMediaPayload {
+  base64: string;
+  mediaType?: string;
+  caption?: string;
+}
+
+export interface ActivityMediaResponse {
+  media: {
+    id: number;
+    trip_id: number;
+    activity_id: number;
+    s3_url: string;
+    media_type: string | null;
+    caption: string | null;
+    created_at: string;
+  };
+}
+
+export function uploadActivityMedia(activityId: number | string, payload: UploadMediaPayload) {
+  return apiFetch<ActivityMediaResponse>(`/api/trips/activities/${activityId}/media`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface TripSummary {
+  id: number;
+  title: string;
+  is_public?: boolean;
+  created_at: string;
+  total_budget: number | string | null;
+  total_distance_miles: number | string | null;
+  total_drive_time_minutes: number | null;
+  total_gas_cost: number | string | null;
+  user?: { id: string; username: string | null; avatar_url: string | null } | null;
+  activities?: Array<{ id: number; title?: string; description?: string | null; location_coords?: unknown }> | null;
+  route_preview_points?: Array<{ id: number; title: string; latitude: number; longitude: number }> | null;
+  trip_media?: Array<{ id?: number; s3_url: string; activity_id?: number | null; media_type?: string | null; caption?: string | null; created_at: string }> | null;
+  engagement?: { likes?: number; comments?: number; saves?: number; copies?: number } | null;
+}
+
+export interface TripsResponse {
+  trips: TripSummary[];
+}
+
+export function getFeed() {
+  return apiFetch<TripsResponse>('/api/trips/feed', { method: 'GET' });
+}
+
+export function getMyTrips() {
+  return apiFetch<TripsResponse>('/api/trips/mine', { method: 'GET' });
 }

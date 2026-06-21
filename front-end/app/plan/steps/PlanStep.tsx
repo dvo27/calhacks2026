@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   View,
   Text,
+  Image,
   ScrollView,
   TextInput,
   TouchableOpacity,
@@ -11,6 +12,7 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
+import * as ImagePicker from 'expo-image-picker';
 import { Colors } from '@/constants/colors';
 import { useTrekStore } from '@/lib/store';
 import {
@@ -18,7 +20,9 @@ import {
   updateActivity,
   updateTrip,
   publishTrip,
+  uploadActivityMedia,
   type TimelineActivity,
+  type ActivityMedia,
 } from '@/lib/api';
 import TripRouteMap, { TripRoutePoint } from '@/components/map/TripRouteMap';
 
@@ -79,6 +83,9 @@ export default function PlanStep() {
   const [title, setTitle] = useState('');
   const [ratings, setRatings] = useState<Record<number, number>>({});
   const [times, setTimes] = useState<Record<number, number>>({});
+  const [descriptions, setDescriptions] = useState<Record<number, string>>({});
+  const [media, setMedia] = useState<Record<number, ActivityMedia[]>>({});
+  const [uploadingId, setUploadingId] = useState<number | null>(null);
   const [busy, setBusy] = useState<null | 'save' | 'share'>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -101,9 +108,13 @@ export default function PlanStep() {
 
         const initialRatings: Record<number, number> = {};
         const initialTimes: Record<number, number> = {};
+        const initialDescriptions: Record<number, string> = {};
+        const initialMedia: Record<number, ActivityMedia[]> = {};
         let cursor = DEFAULT_START_MINUTES;
         for (const place of data.places) {
           initialRatings[place.id] = place.rating ?? 0;
+          initialDescriptions[place.id] = place.description ?? '';
+          initialMedia[place.id] = place.media ?? [];
           const fromStart = minutesFromISO(place.startTime);
           if (fromStart !== null) {
             initialTimes[place.id] = fromStart;
@@ -115,6 +126,8 @@ export default function PlanStep() {
         }
         setRatings(initialRatings);
         setTimes(initialTimes);
+        setDescriptions(initialDescriptions);
+        setMedia(initialMedia);
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load trip.');
       } finally {
@@ -172,6 +185,46 @@ export default function PlanStep() {
     });
   }
 
+  async function handleAddPhoto(activityId: number) {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('Photos access needed', 'Enable photo library access to add pictures to your stops.');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        quality: 0.5,
+        base64: true,
+      });
+      if (result.canceled || !result.assets?.length) return;
+
+      const asset = result.assets[0];
+      if (!asset.base64) {
+        Alert.alert('Couldn’t read image', 'Please try a different photo.');
+        return;
+      }
+
+      setUploadingId(activityId);
+      const { media: saved } = await uploadActivityMedia(activityId, {
+        base64: asset.base64,
+        mediaType: asset.mimeType ?? 'image/jpeg',
+      });
+      setMedia((prev) => ({
+        ...prev,
+        [activityId]: [
+          ...(prev[activityId] ?? []),
+          { id: saved.id, url: saved.s3_url, mediaType: saved.media_type, caption: saved.caption },
+        ],
+      }));
+    } catch (err) {
+      Alert.alert('Upload failed', err instanceof Error ? err.message : 'Please try again.');
+    } finally {
+      setUploadingId(null);
+    }
+  }
+
   async function persist(mode: 'save' | 'share') {
     if (!tripId) return;
     setBusy(mode);
@@ -182,6 +235,7 @@ export default function PlanStep() {
           const duration = place.durationMinutes ?? 60;
           return updateActivity(place.id, {
             rating: ratings[place.id] ? ratings[place.id] : null,
+            description: descriptions[place.id]?.trim() || null,
             start_time: isoFromMinutes(startMinutes),
             end_time: isoFromMinutes(startMinutes + duration),
           });
@@ -336,6 +390,32 @@ export default function PlanStep() {
                 </TouchableOpacity>
               </View>
             </View>
+
+            <TextInput
+              style={styles.descInput}
+              value={descriptions[place.id] ?? ''}
+              onChangeText={(text) => setDescriptions((prev) => ({ ...prev, [place.id]: text }))}
+              placeholder="Add a note about this stop…"
+              placeholderTextColor={Colors.soft}
+              multiline
+            />
+
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.photoRow}>
+              {(media[place.id] ?? []).map((m) => (
+                <Image key={m.id} source={{ uri: m.url }} style={styles.photo} />
+              ))}
+              <TouchableOpacity
+                style={styles.addPhoto}
+                onPress={() => handleAddPhoto(place.id)}
+                disabled={uploadingId === place.id}
+              >
+                {uploadingId === place.id ? (
+                  <ActivityIndicator color={Colors.soft} />
+                ) : (
+                  <Text style={styles.addPhotoText}>＋{'\n'}Photo</Text>
+                )}
+              </TouchableOpacity>
+            </ScrollView>
           </View>
         ))}
 
@@ -404,6 +484,29 @@ const styles = StyleSheet.create({
   star: { fontSize: 22, color: Colors.line },
   starOn: { color: Colors.amber },
 
+  descInput: {
+    marginTop: 12,
+    backgroundColor: Colors.bg,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: Colors.ink,
+    minHeight: 44,
+  },
+  photoRow: { marginTop: 12 },
+  photo: { width: 72, height: 72, borderRadius: 12, marginRight: 8, backgroundColor: Colors.line },
+  addPhoto: {
+    width: 72,
+    height: 72,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: Colors.line,
+    borderStyle: 'dashed',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  addPhotoText: { color: Colors.soft, fontWeight: '700', fontSize: 12, textAlign: 'center' },
   stepper: { flexDirection: 'row', alignItems: 'center', gap: 12, backgroundColor: Colors.bg, borderRadius: 12, paddingHorizontal: 6, paddingVertical: 4 },
   stepBtn: { width: 30, height: 30, borderRadius: 10, backgroundColor: Colors.paper, alignItems: 'center', justifyContent: 'center' },
   stepBtnText: { fontSize: 18, color: Colors.ink, fontWeight: '700' },

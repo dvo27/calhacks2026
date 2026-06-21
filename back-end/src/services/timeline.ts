@@ -34,6 +34,13 @@ type TripRow = {
   activities?: TripActivityRow[] | null;
 };
 
+export type ActivityMedia = {
+  id: number;
+  url: string;
+  mediaType: string | null;
+  caption: string | null;
+};
+
 export type TimelineActivity = {
   id: number;
   title: string;
@@ -46,9 +53,20 @@ export type TimelineActivity = {
   cost: number;
   tags: string[];
   rating: number | null;
+  media: ActivityMedia[];
   venueHours: unknown;
   weatherSnapshot: unknown;
   createdAt: string;
+};
+
+type TripMediaRow = {
+  id: number;
+  trip_id: number;
+  activity_id: number | null;
+  s3_url: string;
+  media_type: string | null;
+  caption: string | null;
+  created_at: string;
 };
 
 export type TimelineDay = {
@@ -101,6 +119,47 @@ function toNullableNumber(value: number | string | null | undefined) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parsePostgisPointHex(input: string) {
+  const hex = input.trim();
+  if (!/^[0-9a-f]+$/i.test(hex) || hex.length < 2) {
+    return null;
+  }
+
+  const buffer = Buffer.from(hex, 'hex');
+  if (buffer.length < 1 + 4 + 16) {
+    return null;
+  }
+
+  const littleEndian = buffer.readUInt8(0) === 1;
+  const readUInt32 = littleEndian ? buffer.readUInt32LE.bind(buffer) : buffer.readUInt32BE.bind(buffer);
+  const readDouble = littleEndian ? buffer.readDoubleLE.bind(buffer) : buffer.readDoubleBE.bind(buffer);
+
+  let offset = 1;
+  const geometryType = readUInt32(offset);
+  offset += 4;
+
+  if ((geometryType & 0x0fffffff) !== 1) {
+    return null;
+  }
+
+  if (geometryType & 0x20000000) {
+    offset += 4;
+  }
+
+  if (buffer.length < offset + 16) {
+    return null;
+  }
+
+  const longitude = readDouble(offset);
+  const latitude = readDouble(offset + 8);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return { latitude, longitude };
+}
+
 function parseLocationCoords(value: unknown) {
   if (!value) {
     return null;
@@ -127,6 +186,11 @@ function parseLocationCoords(value: unknown) {
   }
 
   if (typeof value === 'string') {
+    const hexPoint = parsePostgisPointHex(value);
+    if (hexPoint) {
+      return hexPoint;
+    }
+
     const match = value.match(/POINT\s*\(\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*\)/i);
     if (match) {
       return {
@@ -210,7 +274,10 @@ function sortActivities(activities: TimelineActivity[]) {
   });
 }
 
-function normalizeActivities(activities: TripActivityRow[] | null | undefined): TimelineActivity[] {
+function normalizeActivities(
+  activities: TripActivityRow[] | null | undefined,
+  mediaByActivity: Map<number, ActivityMedia[]>
+): TimelineActivity[] {
   return sortActivities(
     (activities ?? []).map((activity) => {
       const startDate = parseTimeBucket(activity.start_time);
@@ -230,12 +297,42 @@ function normalizeActivities(activities: TripActivityRow[] | null | undefined): 
         cost: toNumber(activity.cost),
         tags: activity.tags ?? [],
         rating: activity.rating,
+        media: mediaByActivity.get(activity.id) ?? [],
         venueHours: activity.venue_hours,
         weatherSnapshot: activity.weather_snapshot,
         createdAt: activity.created_at,
       };
     })
   );
+}
+
+async function fetchMediaByActivity(tripId: number | string): Promise<Map<number, ActivityMedia[]>> {
+  const map = new Map<number, ActivityMedia[]>();
+  const { data, error } = await supabase
+    .from('trip_media')
+    .select('id, trip_id, activity_id, s3_url, media_type, caption, created_at')
+    .eq('trip_id', tripId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Failed to load trip media:', error.message);
+    return map;
+  }
+
+  for (const row of (data ?? []) as TripMediaRow[]) {
+    if (row.activity_id === null) continue;
+    const entry: ActivityMedia = {
+      id: row.id,
+      url: row.s3_url,
+      mediaType: row.media_type,
+      caption: row.caption,
+    };
+    const existing = map.get(row.activity_id);
+    if (existing) existing.push(entry);
+    else map.set(row.activity_id, [entry]);
+  }
+
+  return map;
 }
 
 export async function getTripTimeline(tripId: number | string): Promise<TripTimeline | null> {
@@ -265,7 +362,8 @@ export async function getTripTimeline(tripId: number | string): Promise<TripTime
     return null;
   }
 
-  const activities = normalizeActivities(data.activities);
+  const mediaByActivity = await fetchMediaByActivity(tripId);
+  const activities = normalizeActivities(data.activities, mediaByActivity);
   const totalDurationMinutes = activities.reduce((total, activity) => total + (activity.durationMinutes ?? 0), 0);
   const totalCost = activities.reduce((total, activity) => total + activity.cost, 0);
   const firstActivityAt = activities[0]?.startTime ?? activities[0]?.createdAt ?? null;

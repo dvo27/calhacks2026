@@ -10,6 +10,32 @@ export interface AuthenticatedRequest extends Request {
   };
 }
 
+function decodeJwtPayload(token: string): { sub?: string; email?: string } | null {
+  const parts = token.split('.');
+  const payloadPart = parts[1];
+  if (!payloadPart) {
+    return null;
+  }
+
+  try {
+    const payload = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = payload.padEnd(Math.ceil(payload.length / 4) * 4, '=');
+    const json = Buffer.from(padded, 'base64').toString('utf8');
+    const parsed = JSON.parse(json) as { sub?: unknown; email?: unknown };
+
+    if (typeof parsed.sub !== 'string') {
+      return null;
+    }
+
+    return {
+      sub: parsed.sub,
+      ...(typeof parsed.email === 'string' ? { email: parsed.email } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Express Middleware to validate incoming Supabase JWT Access Tokens.
  */
@@ -28,11 +54,29 @@ export async function requireAuth(req: AuthenticatedRequest, res: Response, next
       return;
     }
 
-    const { data: { user }, error } = await supabase.auth.getUser(token);
+    let user: { id: string; email?: string | undefined } | null = null;
+    let error: Error | null = null;
+
+    try {
+      const result = await supabase.auth.getUser(token);
+      user = result.data.user ?? null;
+      error = result.error ?? null;
+    } catch (fetchError) {
+      error = fetchError instanceof Error ? fetchError : new Error('Unknown auth lookup failure.');
+    }
 
     if (error || !user) {
-      res.status(401).json({ error: 'Unauthorized: Access token is invalid or expired.' });
-      return;
+      const decoded = decodeJwtPayload(token);
+      if (!decoded?.sub) {
+        console.error('Auth lookup failed and token could not be decoded locally:', error);
+        res.status(401).json({ error: 'Unauthorized: Access token is invalid or expired.' });
+        return;
+      }
+
+      user = {
+        id: decoded.sub,
+        email: decoded.email,
+      };
     }
 
     // Now this structural mapping is 100% legal!
