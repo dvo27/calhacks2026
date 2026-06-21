@@ -38,13 +38,36 @@ export default function DiscoverMap({
 }: DiscoverMapProps) {
   const mapRef = useRef<MapView>(null);
   const [mapReady, setMapReady] = useState(false);
+  const prevCandidateCountRef = useRef(0);
 
   function handleLongPress(e: LongPressEvent) {
     onLongPress(e.nativeEvent.coordinate);
   }
 
+  // Jump to the searched area when a new search origin resolves.
+  useEffect(() => {
+    if (!mapReady || !focusPoint) return;
+
+    mapRef.current?.animateToRegion(
+      {
+        latitude: focusPoint.latitude,
+        longitude: focusPoint.longitude,
+        latitudeDelta: 0.08,
+        longitudeDelta: 0.08,
+      },
+      300
+    );
+  }, [focusPoint, mapReady]);
+
+  // Frame the map around incoming search results. Gated on the candidate set
+  // GROWING so that adding/removing itinerary stops never moves the camera —
+  // otherwise every tap to add an activity would refit and zoom the map out.
   useEffect(() => {
     if (!mapReady) return;
+
+    const grew = candidates.length > prevCandidateCountRef.current;
+    prevCandidateCountRef.current = candidates.length;
+    if (!grew) return;
 
     const markerCoordinates = [
       ...(currentLocation ? [{ latitude: currentLocation.latitude, longitude: currentLocation.longitude }] : []),
@@ -70,21 +93,8 @@ export default function DiscoverMap({
         edgePadding: { top: 110, right: 70, bottom: 260, left: 70 },
         animated: true,
       });
-      return;
     }
-
-    if (focusPoint) {
-      mapRef.current?.animateToRegion(
-        {
-          latitude: focusPoint.latitude,
-          longitude: focusPoint.longitude,
-          latitudeDelta: 0.08,
-          longitudeDelta: 0.08,
-        },
-        300
-      );
-    }
-  }, [candidates, currentLocation, focusPoint, mapReady, stops]);
+  }, [candidates, currentLocation, mapReady, stops]);
 
   return (
     <View style={styles.wrap}>
