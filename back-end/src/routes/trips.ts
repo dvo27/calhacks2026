@@ -401,7 +401,7 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
     }
   });
 
-  router.post('/place-suggestions', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+  router.post('/place-suggestions', async (req: AuthenticatedRequest, res: Response) => {
     try {
       const { locationQuery, searchQuery, originCoords, radiusMeters, limit } = req.body ?? {};
 

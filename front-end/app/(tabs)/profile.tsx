@@ -56,7 +56,8 @@ function fmtMin(m: number | null) {
 
 function initials(username: string | null, email: string) {
   if (username) return username[0].toUpperCase();
-  return email[0].toUpperCase();
+  if (email) return email[0].toUpperCase();
+  return '?';
 }
 
 export default function ProfileScreen() {

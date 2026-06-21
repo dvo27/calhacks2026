@@ -15,7 +15,14 @@ const PORT = Number(getBackendEnv('PORT') ?? 5001);
 const REDIS_URL = getBackendEnv('REDIS_URL') ?? 'redis://127.0.0.1:6379';
 
 app.use(express.json({ limit: '15mb' })); // base64 image uploads ride in the JSON body
-app.use((req, res, next) => { console.log(`→ ${req.method} ${req.path}`); next(); });
+app.use((req, res, next) => {
+  const start = Date.now();
+  console.log(`→ ${req.method} ${req.path}`);
+  res.on('finish', () => {
+    console.log(`← ${res.statusCode} ${req.method} ${req.path} (${Date.now() - start}ms)`);
+  });
+  next();
+});
 
 // 1. Initialize your BullMQ Queue to pass jobs off to your background worker
 const redisUrl = new URL(REDIS_URL);
@@ -45,6 +52,6 @@ app.use('/api/profile', createProfileRouter());
 app.use('/api/collections', createCollectionsRouter());
 app.use('/api', createSocialRouter());
 
-app.listen(PORT, () => {
-  console.log(`API server listening on http://localhost:${PORT}`);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`API server listening on http://0.0.0.0:${PORT}`);
 });
