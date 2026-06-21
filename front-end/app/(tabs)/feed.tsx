@@ -1,15 +1,43 @@
-import { View, Text, ScrollView, TouchableOpacity, StyleSheet } from 'react-native';
+import { useCallback, useState } from 'react';
+import { View, Text, ScrollView, TouchableOpacity, StyleSheet, RefreshControl, ActivityIndicator } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { Colors } from '@/constants/colors';
-import { FEED_POSTS } from '@/lib/mockData';
 import { useTrekStore } from '@/lib/store';
-import PostCard from '@/components/feed/PostCard';
+import { getFeed, type TripSummary } from '@/lib/api';
+import TripCard from '@/components/feed/TripCard';
 
 export default function FeedScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const startNewDay = useTrekStore((s) => s.startNewDay);
+
+  const [trips, setTrips] = useState<TripSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (mode: 'initial' | 'refresh') => {
+    if (mode === 'refresh') setRefreshing(true);
+    else setLoading(true);
+    try {
+      const data = await getFeed();
+      setTrips(data.trips);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load feed.');
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  // Refetch each time the tab gains focus so newly shared trips appear.
+  useFocusEffect(
+    useCallback(() => {
+      load('initial');
+    }, [load])
+  );
 
   function handleNewDay() {
     startNewDay();
@@ -20,7 +48,7 @@ export default function FeedScreen() {
     <View style={[styles.root, { paddingTop: insets.top }]}>
       <View style={styles.header}>
         <Text style={styles.logo}>trek</Text>
-        <TouchableOpacity style={styles.avatarBtn}>
+        <TouchableOpacity style={styles.avatarBtn} onPress={() => router.push('/profile')}>
           <View style={styles.avatar}>
             <Text style={styles.avatarText}>P</Text>
           </View>
@@ -30,6 +58,7 @@ export default function FeedScreen() {
       <ScrollView
         contentContainerStyle={styles.scroll}
         showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => load('refresh')} tintColor={Colors.coral} />}
       >
         <TouchableOpacity style={styles.ctaCard} onPress={handleNewDay} activeOpacity={0.85}>
           <Text style={styles.ctaEmoji}>＋</Text>
@@ -39,18 +68,19 @@ export default function FeedScreen() {
           </View>
         </TouchableOpacity>
 
-        <Text style={styles.sectionLabel}>Friends' days</Text>
+        <Text style={styles.sectionLabel}>Shared days</Text>
 
-        {FEED_POSTS.map((post) => (
-          <PostCard
-            key={post.id}
-            post={post}
-            onPress={() => router.push(`/post/${post.id}`)}
-            onCopy={() => {
-              // TODO: load this post's route into the store as a new draft trip
-            }}
-          />
-        ))}
+        {loading ? (
+          <ActivityIndicator color={Colors.coral} style={{ marginTop: 24 }} />
+        ) : error ? (
+          <Text style={styles.empty}>{error}</Text>
+        ) : trips.length === 0 ? (
+          <Text style={styles.empty}>No shared trips yet. Build a day and share it to the feed!</Text>
+        ) : (
+          trips.map((trip) => (
+            <TripCard key={trip.id} trip={trip} showAuthor onPress={() => router.push(`/trip/${trip.id}`)} />
+          ))
+        )}
 
         <View style={{ height: 20 }} />
       </ScrollView>
@@ -104,4 +134,5 @@ const styles = StyleSheet.create({
     letterSpacing: 0.8,
     marginBottom: 10,
   },
+  empty: { color: Colors.soft, fontSize: 14, textAlign: 'center', marginTop: 24, paddingHorizontal: 20, lineHeight: 20 },
 });

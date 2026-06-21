@@ -6,6 +6,7 @@ export default function RootLayout() {
       <Stack.Screen name="(tabs)" />
       <Stack.Screen name="plan" />
       <Stack.Screen name="post/[id]" />
+      <Stack.Screen name="trip/[id]" />
     </Stack>
   );
 }

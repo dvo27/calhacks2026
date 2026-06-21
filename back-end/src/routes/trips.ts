@@ -6,6 +6,7 @@ import type { AuthenticatedRequest } from '../middleware/auth.js';
 import { ensureTripOwnership, getTripEngagementCounts } from '../services/metrics.js';
 import { getTripTimeline, invalidateTripTimeline } from '../services/timeline.js';
 import { suggestPlacesForLocation } from '../services/places.js';
+import { uploadActivityImage } from '../services/storage.js';
 
 type TripsRouterOptions = {
   itineraryQueue: Queue;
@@ -28,6 +29,13 @@ type ActivityRow = {
   created_at: string;
 };
 
+type RoutePreviewPoint = {
+  id: number;
+  title: string;
+  latitude: number;
+  longitude: number;
+};
+
 function toNumber(value: unknown, fallback = 0) {
   if (value === null || value === undefined) {
     return fallback;
@@ -35,6 +43,47 @@ function toNumber(value: unknown, fallback = 0) {
 
   const parsed = typeof value === 'number' ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parsePostgisPointHex(input: string) {
+  const hex = input.trim();
+  if (!/^[0-9a-f]+$/i.test(hex) || hex.length < 2) {
+    return null;
+  }
+
+  const buffer = Buffer.from(hex, 'hex');
+  if (buffer.length < 1 + 4 + 16) {
+    return null;
+  }
+
+  const littleEndian = buffer.readUInt8(0) === 1;
+  const readUInt32 = littleEndian ? buffer.readUInt32LE.bind(buffer) : buffer.readUInt32BE.bind(buffer);
+  const readDouble = littleEndian ? buffer.readDoubleLE.bind(buffer) : buffer.readDoubleBE.bind(buffer);
+
+  let offset = 1;
+  const geometryType = readUInt32(offset);
+  offset += 4;
+
+  if ((geometryType & 0x0fffffff) !== 1) {
+    return null;
+  }
+
+  if (geometryType & 0x20000000) {
+    offset += 4;
+  }
+
+  if (buffer.length < offset + 16) {
+    return null;
+  }
+
+  const longitude = readDouble(offset);
+  const latitude = readDouble(offset + 8);
+
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return { latitude, longitude };
 }
 
 function parseLocationCoords(input: unknown) {
@@ -62,6 +111,106 @@ function parseLocationCoords(input: unknown) {
   }
 
   return null;
+}
+
+function parseRoutePreviewPoint(activity: { id: number; title: string; location_coords?: unknown }): RoutePreviewPoint | null {
+  const input = activity.location_coords;
+
+  if (typeof input === 'string') {
+    const parsedHex = parsePostgisPointHex(input);
+    if (parsedHex) {
+      return {
+        id: activity.id,
+        title: activity.title,
+        latitude: parsedHex.latitude,
+        longitude: parsedHex.longitude,
+      };
+    }
+
+    const match = input.match(/POINT\s*\(\s*(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s*\)/i);
+    if (!match) return null;
+
+    const longitude = Number(match[1]);
+    const latitude = Number(match[2]);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+    return {
+      id: activity.id,
+      title: activity.title,
+      latitude,
+      longitude,
+    };
+  }
+
+  if (typeof input === 'object' && input) {
+    const maybeObject = input as { latitude?: unknown; longitude?: unknown; lat?: unknown; lng?: unknown; coordinates?: unknown };
+
+    if (typeof maybeObject.latitude === 'number' && typeof maybeObject.longitude === 'number') {
+      return {
+        id: activity.id,
+        title: activity.title,
+        latitude: maybeObject.latitude,
+        longitude: maybeObject.longitude,
+      };
+    }
+
+    if (typeof maybeObject.lat === 'number' && typeof maybeObject.lng === 'number') {
+      return {
+        id: activity.id,
+        title: activity.title,
+        latitude: maybeObject.lat,
+        longitude: maybeObject.lng,
+      };
+    }
+
+    if (Array.isArray(maybeObject.coordinates) && maybeObject.coordinates.length >= 2) {
+      const [longitude, latitude] = maybeObject.coordinates;
+      if (typeof latitude === 'number' && typeof longitude === 'number') {
+        return {
+          id: activity.id,
+          title: activity.title,
+          latitude,
+          longitude,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function buildRoutePreviewPoints(activities: Array<{ id: number; title: string; location_coords?: unknown }> | null | undefined) {
+  return (activities ?? [])
+    .map((activity) => parseRoutePreviewPoint(activity))
+    .filter((point): point is RoutePreviewPoint => point !== null);
+}
+
+async function loadRoutePreviewPointsByTripId(tripIds: Array<number | string>) {
+  const map = new Map<number | string, RoutePreviewPoint[]>();
+
+  if (!tripIds.length) {
+    return map;
+  }
+
+  const { data, error } = await supabase
+    .from('activities')
+    .select('trip_id, id, title, location_coords')
+    .in('trip_id', tripIds);
+
+  if (error) {
+    throw error;
+  }
+
+  for (const row of (data ?? []) as Array<{ trip_id: number | string; id: number; title: string; location_coords?: unknown }>) {
+    const point = parseRoutePreviewPoint({ id: row.id, title: row.title, location_coords: row.location_coords });
+    if (!point) continue;
+
+    const existing = map.get(row.trip_id);
+    if (existing) existing.push(point);
+    else map.set(row.trip_id, [point]);
+  }
+
+  return map;
 }
 
 function getActivityPayload(body: Record<string, unknown>) {
@@ -286,16 +435,20 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
         .select(`
           id, title, total_budget, total_distance_miles, total_drive_time_minutes, total_gas_cost, created_at,
           user:users (id, username, avatar_url),
-          activities (id, title, location_name, cost, start_time, end_time, tags)
+          activities (id, title, description, location_name, cost, start_time, end_time, tags, location_coords),
+          trip_media (id, s3_url, activity_id, media_type, caption, created_at)
         `)
         .eq('is_public', true)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
+      const routePreviewByTrip = await loadRoutePreviewPointsByTripId((publicTrips ?? []).map((trip) => trip.id));
+
       const tripsWithCounts = await Promise.all(
         (publicTrips ?? []).map(async (trip) => ({
           ...trip,
+          route_preview_points: routePreviewByTrip.get(trip.id) ?? buildRoutePreviewPoints(trip.activities as Array<{ id: number; title: string; location_coords?: unknown }> | null | undefined),
           engagement: await getTripEngagementCounts(trip.id),
         }))
       );
@@ -318,15 +471,22 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
 
       const { data: trips, error } = await supabase
         .from('trips')
-        .select('id, title, is_public, created_at, total_budget, total_distance_miles, total_drive_time_minutes, total_gas_cost')
+        .select(`
+          id, title, is_public, created_at, total_budget, total_distance_miles, total_drive_time_minutes, total_gas_cost,
+          activities (id, title, description, location_name, cost, start_time, end_time, tags, location_coords),
+          trip_media (id, s3_url, activity_id, media_type, caption, created_at)
+        `)
         .eq('user_id', userId)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
 
+      const routePreviewByTrip = await loadRoutePreviewPointsByTripId((trips ?? []).map((trip) => trip.id));
+
       const tripsWithCounts = await Promise.all(
         (trips ?? []).map(async (trip) => ({
           ...trip,
+          route_preview_points: routePreviewByTrip.get(trip.id) ?? buildRoutePreviewPoints(trip.activities as Array<{ id: number; title: string; location_coords?: unknown }> | null | undefined),
           engagement: await getTripEngagementCounts(trip.id),
         }))
       );
@@ -412,6 +572,74 @@ export function createTripsRouter({ itineraryQueue }: TripsRouterOptions) {
     } catch (error) {
       console.error('Error creating trip activity:', error);
       res.status(500).json({ error: 'Failed to create trip activity.' });
+    }
+  });
+
+  // Upload a photo for an activity: base64 → Supabase Storage → trip_media row.
+  router.post('/activities/:activityId/media', requireAuth, async (req: AuthenticatedRequest, res: Response) => {
+    try {
+      const activityId = String(req.params.activityId ?? '');
+      const userId = req.user?.id;
+
+      if (!userId) {
+        res.status(401).json({ error: 'Unauthorized: Invalid context identity.' });
+        return;
+      }
+
+      const { base64, mediaType, caption } = req.body ?? {};
+      if (!base64 || typeof base64 !== 'string') {
+        res.status(400).json({ error: 'A base64 image payload is required.' });
+        return;
+      }
+
+      const { data: activity, error: fetchError } = await supabase
+        .from('activities')
+        .select('id, trip_id')
+        .eq('id', activityId)
+        .maybeSingle<{ id: number; trip_id: number }>();
+
+      if (fetchError) throw fetchError;
+      if (!activity) {
+        res.status(404).json({ error: 'Activity not found.' });
+        return;
+      }
+
+      const ownership = await ensureTripOwnership(activity.trip_id, userId);
+      if (!ownership.owner) {
+        res.status(403).json({ error: 'Forbidden: You do not own this activity.' });
+        return;
+      }
+
+      const uploaded = await uploadActivityImage(
+        activity.trip_id,
+        activity.id,
+        base64,
+        typeof mediaType === 'string' ? mediaType : 'image/jpeg'
+      );
+
+      const { data: media, error: insertError } = await supabase
+        .from('trip_media')
+        .insert({
+          trip_id: activity.trip_id,
+          activity_id: activity.id,
+          s3_url: uploaded.publicUrl,
+          media_type: uploaded.contentType.startsWith('video/') ? 'video' : 'image',
+          caption: typeof caption === 'string' ? caption : null,
+        })
+        .select('id, trip_id, activity_id, s3_url, media_type, caption, created_at')
+        .single();
+
+      if (insertError || !media) {
+        res.status(500).json({ error: 'Failed to save media record.' });
+        return;
+      }
+
+      await invalidateTripTimeline(activity.trip_id);
+
+      res.status(201).json({ media });
+    } catch (error) {
+      console.error('Error uploading activity media:', error);
+      res.status(500).json({ error: 'Failed to upload activity media.' });
     }
   });
 
